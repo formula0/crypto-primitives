@@ -211,7 +211,7 @@ fn select_left_right_child<L: Clone>(
 /// solve the problem.
 #[derive(Derivative)]
 #[derivative(Clone(bound = "P: Config"))]
-pub struct MerkleTree<P: Config> {
+pub struct MerkleMountainRange<P: Config> {
     /// stores the non-leaf nodes in level order. The first element is the root node.
     /// The ith nodes (starting at 1st) children are at indices `2*i`, `2*i+1`
     non_leaf_nodes: Vec<P::InnerDigest>,
@@ -225,7 +225,7 @@ pub struct MerkleTree<P: Config> {
     height: usize,
 }
 
-impl<P: Config> MerkleTree<P> {
+impl<P: Config> MerkleMountainRange<P> {
     /// Create an empty merkle tree such that all leaves are zero-filled.
     /// Consider using a sparse merkle tree if you need the tree to be low memory
     pub fn blank(
@@ -318,7 +318,7 @@ impl<P: Config> MerkleTree<P> {
             }
         }
 
-        Ok(MerkleTree {
+        Ok(MerkleMountainRange {
             leaf_nodes: leaves_digest,
             non_leaf_nodes,
             height: tree_height,

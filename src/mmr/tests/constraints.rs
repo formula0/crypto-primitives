@@ -3,7 +3,7 @@ mod byte_mt_tests {
 
     use crate::merkle_tree::constraints::{BytesVarDigestConverter, ConfigGadget};
     use crate::merkle_tree::{ByteDigestConverter, Config};
-    use crate::{CRHScheme, CRHSchemeGadget, MerkleTree, PathVar};
+    use crate::{CRHScheme, CRHSchemeGadget, MerkleMountainRange, PathVar};
     use ark_ed_on_bls12_381::{constraints::EdwardsVar, EdwardsProjective as JubJub, Fq};
     #[allow(unused)]
     use ark_r1cs_std::prelude::*;
@@ -25,9 +25,9 @@ mod byte_mt_tests {
 
     type LeafVar<ConstraintF> = [UInt8<ConstraintF>];
 
-    struct JubJubMerkleTreeParams;
+    struct JubJubMerkleMountainRangeParams;
 
-    impl Config for JubJubMerkleTreeParams {
+    impl Config for JubJubMerkleMountainRangeParams {
         type Leaf = [u8];
         type LeafDigest = <LeafH as CRHScheme>::Output;
         type LeafInnerDigestConverter = ByteDigestConverter<Self::LeafDigest>;
@@ -38,8 +38,8 @@ mod byte_mt_tests {
     }
 
     type ConstraintF = Fq;
-    struct JubJubMerkleTreeParamsVar;
-    impl ConfigGadget<JubJubMerkleTreeParams, ConstraintF> for JubJubMerkleTreeParamsVar {
+    struct JubJubMerkleMountainRangeParamsVar;
+    impl ConfigGadget<JubJubMerkleMountainRangeParams, ConstraintF> for JubJubMerkleMountainRangeParamsVar {
         type Leaf = LeafVar<ConstraintF>;
         type LeafDigest = <LeafHG as CRHSchemeGadget<LeafH, ConstraintF>>::OutputVar;
         type LeafInnerConverter = BytesVarDigestConverter<Self::LeafDigest, ConstraintF>;
@@ -49,7 +49,7 @@ mod byte_mt_tests {
         type TwoToOneHash = CompressHG;
     }
 
-    type JubJubMerkleTree = MerkleTree<JubJubMerkleTreeParams>;
+    type JubJubMerkleMountainRange = MerkleMountainRange<JubJubMerkleMountainRangeParams>;
 
     /// Generate a merkle tree, its constraints, and test its constraints
     fn merkle_tree_test(
@@ -61,7 +61,7 @@ mod byte_mt_tests {
 
         let leaf_crh_params = <LeafH as CRHScheme>::setup(&mut rng).unwrap();
         let two_to_one_crh_params = <CompressH as TwoToOneCRHScheme>::setup(&mut rng).unwrap();
-        let mut tree = JubJubMerkleTree::new(
+        let mut tree = JubJubMerkleMountainRange::new(
             &leaf_crh_params,
             &two_to_one_crh_params,
             leaves.iter().map(|v| v.as_slice()),
@@ -121,7 +121,7 @@ mod byte_mt_tests {
             println!("constraints from leaf: {}", constraints_from_leaf);
 
             // Allocate Merkle Tree Path
-            let cw: PathVar<JubJubMerkleTreeParams, Fq, JubJubMerkleTreeParamsVar> =
+            let cw: PathVar<JubJubMerkleMountainRangeParams, Fq, JubJubMerkleMountainRangeParamsVar> =
                 PathVar::new_witness(ark_relations::ns!(cs, "new_witness"), || Ok(&proof)).unwrap();
 
             let constraints_from_path = cs.num_constraints()
@@ -188,7 +188,7 @@ mod byte_mt_tests {
             )
             .unwrap();
             let old_path = tree.generate_proof(update_query.0).unwrap();
-            let old_path_var: PathVar<JubJubMerkleTreeParams, Fq, JubJubMerkleTreeParamsVar> =
+            let old_path_var: PathVar<JubJubMerkleMountainRangeParams, Fq, JubJubMerkleMountainRangeParamsVar> =
                 PathVar::new_input(ark_relations::ns!(cs, "old_path"), || Ok(old_path)).unwrap();
             let new_root = {
                 tree.update(update_query.0, &update_query.1).unwrap();
@@ -243,7 +243,7 @@ mod field_mt_tests {
     use crate::merkle_tree::constraints::ConfigGadget;
     use crate::merkle_tree::tests::test_utils::poseidon_parameters;
     use crate::merkle_tree::{Config, IdentityDigestConverter};
-    use crate::{CRHSchemeGadget, MerkleTree, PathVar};
+    use crate::{CRHSchemeGadget, MerkleMountainRange, PathVar};
     use ark_r1cs_std::alloc::AllocVar;
     use ark_r1cs_std::fields::fp::FpVar;
     use ark_r1cs_std::uint32::UInt32;
@@ -280,7 +280,7 @@ mod field_mt_tests {
         type TwoToOneHash = TwoToOneHG;
     }
 
-    type FieldMT = MerkleTree<FieldMTConfig>;
+    type FieldMT = MerkleMountainRange<FieldMTConfig>;
 
     fn merkle_tree_test(
         leaves: &[Vec<F>],

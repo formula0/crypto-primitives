@@ -22,9 +22,9 @@ mod bytes_mt_tests {
     type LeafH = pedersen::CRH<JubJub, Window4x256>;
     type CompressH = pedersen::TwoToOneCRH<JubJub, Window4x256>;
 
-    struct JubJubMerkleTreeParams;
+    struct JubJubMerkleMountainRangeParams;
 
-    impl Config for JubJubMerkleTreeParams {
+    impl Config for JubJubMerkleMountainRangeParams {
         type Leaf = [u8];
 
         type LeafDigest = <LeafH as CRHScheme>::Output;
@@ -34,7 +34,7 @@ mod bytes_mt_tests {
         type LeafHash = LeafH;
         type TwoToOneHash = CompressH;
     }
-    type JubJubMerkleTree = MerkleTree<JubJubMerkleTreeParams>;
+    type JubJubMerkleMountainRange = MerkleMountainRange<JubJubMerkleMountainRangeParams>;
 
     /// Pedersen only takes bytes as leaf, so we use `ToBytes` trait.
     fn merkle_tree_test<L: CanonicalSerialize>(leaves: &[L], update_query: &[(usize, L)]) -> () {
@@ -47,7 +47,7 @@ mod bytes_mt_tests {
         let two_to_one_params = <CompressH as TwoToOneCRHScheme>::setup(&mut rng)
             .unwrap()
             .clone();
-        let mut tree = JubJubMerkleTree::new(
+        let mut tree = JubJubMerkleMountainRange::new(
             &leaf_crh_params.clone(),
             &two_to_one_params.clone(),
             leaves.iter().map(|x| x.as_slice()),
@@ -122,7 +122,7 @@ mod field_mt_tests {
     use crate::crh::poseidon;
     use crate::merkle_tree::tests::test_utils::poseidon_parameters;
     use crate::merkle_tree::{Config, IdentityDigestConverter};
-    use crate::MerkleTree;
+    use crate::MerkleMountainRange;
     use ark_std::{test_rng, One, UniformRand};
 
     type F = ark_ed_on_bls12_381::Fr;
@@ -139,7 +139,7 @@ mod field_mt_tests {
         type TwoToOneHash = TwoToOneH;
     }
 
-    type FieldMT = MerkleTree<FieldMTConfig>;
+    type FieldMT = MerkleMountainRange<FieldMTConfig>;
 
     fn merkle_tree_test(leaves: &[Vec<F>], update_query: &[(usize, Vec<F>)]) -> () {
         let mut leaves = leaves.to_vec();
