@@ -5,7 +5,7 @@ pub enum Error {
     InvalidArgument,
     GetRootOnEmpty,
     InconsistentStore,
-    StoreError(crate::string::String),
+    StoreError(crate::ark_std::string::String),
     /// proof items is not enough to build a tree
     CorruptedProof,
     /// The leaves is an empty list, or beyond the mmr range
@@ -27,8 +27,3 @@ impl core::fmt::Display for Error {
     }
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        impl ::std::error::Error for Error {}
-    }
-}

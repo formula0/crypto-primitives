@@ -14,7 +14,7 @@ use ark_std::collections::VecDeque;
 mod error;
 mod mmr_store;
 
-use mmr_store::{MMRBatch, MMRStore};
+use mmr_store::{MMRBatch};
 
 
 #[cfg(test)]
@@ -147,7 +147,7 @@ impl<P: Config> Path<P> {
     /// Verify that a leaf is at `self.index` of the merkle tree.
     /// * `leaf_size`: leaf size in number of bytes
 
-    pub fn verify(&self,
+    pub fn verify<L: Borrow<P::Leaf>>(&self,
         leaf_hash_params: &LeafParam<P>,
         two_to_one_params: &TwoToOneParam<P>,
         root_hash: &P::InnerDigest,
@@ -160,13 +160,13 @@ impl<P: Config> Path<P> {
         let leaves = vec![(self.leaf_index, converted_leaf_hash)];
 
         self.calculate_root(leaves, two_to_one_params)
-            .map(|calculated_root| calculated_root == root)
+            .map(|calculated_root| calculated_root == root_hash)
     }
 
     pub fn calculate_root(&self, 
-        leaves: Vec<(u64, MMRDigest)>,
+        leaves: Vec<(u64, P::InnerDigest)>,
         two_to_one_params: &TwoToOneParam<P>,
-    ) -> Result<MMRDigest> {
+    ) -> Result<P::InnerDigest> {
         calculate_root::<_, _>(leaves, self.mmr_size, self.path.iter(), two_to_one_params)
     }
 
@@ -179,7 +179,8 @@ impl<P: Config> Path<P> {
 /// 3. bagging peaks
 fn calculate_root<
     'a,
-    T: 'a + MMRDigest,
+    P: Config,
+    T: 'a + P::InnerDigest,
     I: Iterator<Item = &'a T>,
 >(
     leaves: Vec<(usize, T)>,
@@ -193,7 +194,8 @@ fn calculate_root<
 
 fn calculate_peaks_hashes<
     'a,
-    T: 'a + MMRDigest,
+    P: Config,
+    T: 'a + P::InnerDigest,
     I: Iterator<Item = &'a T>,
 >(
     mut leaves: Vec<(usize, T)>,
@@ -248,13 +250,14 @@ fn calculate_peaks_hashes<
 
 fn calculate_peak_root<
     'a,
-    T: 'a + MMRDigest,
+    P: Config,
+    T: 'a + P::InnerDigest,
     I: Iterator<Item = &'a T>,
 >(
     leaves: Vec<(u64, T)>,
     peak_pos: usize,
     path_iter: &mut I,
-    two_to_one_params: &TwoToOneParam<P>,
+    two_to_one_hash_params: &TwoToOneParam<P>,
 ) -> Result<T> {
     debug_assert!(!leaves.is_empty(), "can't be empty");
     // (position, hash, height)
@@ -284,18 +287,18 @@ fn calculate_peak_root<
         let sibling_item = if Some(&sib_pos) == queue.front().map(|(pos, _, _)| pos) {
             queue.pop_front().map(|(_, item, _)| item).unwrap()
         } else {
-            proof_iter.next().ok_or(Error::CorruptedProof)?.clone()
+            path_iter.next().ok_or(Error::CorruptedProof)?.clone()
         };
 
         let parent_item = if next_height > height {
             P::TwoToOneHash::compress(
-                two_to_one_hash_param.clone(),
+                two_to_one_hash_params.clone(),
                 &sibling_item.clone(),
                 &item.clone()
             );
         } else {
             P::TwoToOneHash::compress(
-                two_to_one_hash_param.clone(),
+                two_to_one_hash_params.clone(),
                 &item.clone(),
                 &sibling_item.clone()
             );
@@ -310,9 +313,9 @@ fn calculate_peak_root<
     Err(Error::CorruptedProof)
 }
 
-fn bagging_peaks_hashes<'a, T: 'a + MMRDigest>(
+fn bagging_peaks_hashes<'a, P: Config, T: 'a + P::InnerDigest>(
     mut peaks_hashes: Vec<T>,
-    two_to_one_params: &TwoToOneParam<P>,
+    two_to_one_hash_params: &TwoToOneParam<P>,
 ) -> Result<T> {
     // bagging peaks
     // bagging from right to left via hash(right, left).
@@ -321,7 +324,7 @@ fn bagging_peaks_hashes<'a, T: 'a + MMRDigest>(
         let left_peak = peaks_hashes.pop().expect("pop");
         peaks_hashes.push(
             P::TwoToOneHash::compress(
-                two_to_one_hash_param.clone(),
+                two_to_one_hash_params.clone(),
                 &right_peak.clone(), 
                 &left_peak.clone()
             )
@@ -330,7 +333,7 @@ fn bagging_peaks_hashes<'a, T: 'a + MMRDigest>(
     peaks_hashes.pop().ok_or(Error::CorruptedProof)
 }
 
-fn take_while_vec<MMRDigest, P: Fn(&MMRDigest) -> bool>(v: &mut Vec<MMRDigest>, p: P) -> Vec<MMRDigest> {
+fn take_while_vec<P: Config, F: Fn(&P::InnerDigest) -> bool>(v: &mut Vec<P::InnerDigest>, p: F) -> Vec<P::InnerDigest> {
     for i in 0..v.len() {
         if !p(&v[i]) {
             return v.drain(..i).collect();
@@ -353,11 +356,9 @@ fn take_while_vec<MMRDigest, P: Fn(&MMRDigest) -> bool>(v: &mut Vec<MMRDigest>, 
 #[derive(Derivative)]
 #[derivative(Clone(bound = "P: Config"))]
 
-type MMRDigest = P::InnerDigest + P::LeaftDigest;
-
 pub struct MerkleMountainRange<P: Config> {
     /// Store leaf and inner digests
-    batch: MMRBatch<MMRDigest, MMRStore<MMRDigest>>,
+    batch: MMRBatch<P::InnerDigest>,
     /// Store the inner hash parameters
     two_to_one_hash_param: TwoToOneParam<P>,
     /// Store the leaf hash parameters
@@ -374,7 +375,7 @@ impl<P: Config> MerkleMountainRange<P> {
         two_to_one_hash_param: &TwoToOneParam<P>,
     ) -> Self {
         MerkleMountainRange {
-            batch: MMRBatch::new(store),
+            batch: MMRBatch::new(),
             two_to_one_hash_param: two_to_one_hash_param.clone(),
             leaf_hash_param: leaf_hash_param.clone(),
             mmr_size: 0,
@@ -382,7 +383,7 @@ impl<P: Config> MerkleMountainRange<P> {
     }
 
     // find internal MMR elem, the pos must exists, otherwise a error will return
-    fn find_elem<'b>(&self, pos: usize, hashes: &'b [MMRDigest]) -> Result<Cow<'b, MMRDigest>> {
+    fn find_elem<'b>(&self, pos: usize, hashes: &'b [P::InnerDigest]) -> Result<Cow<'b, P::InnerDigest>> {
         let pos_offset = pos.checked_sub(self.mmr_size);
         if let Some(elem) = pos_offset.and_then(|i| hashes.get(i as usize)) {
             return Ok(Cow::Borrowed(elem));
@@ -392,8 +393,8 @@ impl<P: Config> MerkleMountainRange<P> {
     }
 
     // push a element and return position
-    pub fn push(&mut self, elem: MMRDigest) -> Result<usize> {
-        let mut elems: Vec<MMRDigest> = Vec::new();
+    pub fn push(&mut self, elem: P::InnerDigest) -> Result<usize> {
+        let mut elems: Vec<P::InnerDigest> = Vec::new();
         // position of new elem
         let elem_pos = self.mmr_size;
         elems.push(elem);
@@ -429,24 +430,24 @@ impl<P: Config> MerkleMountainRange<P> {
     }
 
     /// Returns the root of the Merkle Mount Range.
-    pub fn get_root(&self) -> MMRDigest {
+    pub fn get_root(&self) -> P::InnerDigest {
         if self.mmr_size == 0 {
             return Err(Error::GetRootOnEmpty);
         } else if self.mmr_size == 1 {
             return self.batch.get_elem(0)?.ok_or(Error::InconsistentStore);
         }
-        let peaks: Vec<MMRDigest> = get_peaks(self.mmr_size)
+        let peaks: Vec<P::InnerDigest> = get_peaks(self.mmr_size)
             .into_iter()
             .map(|peak_pos| {
                 self.batch
                     .get_elem(peak_pos)
                     .and_then(|elem| elem.ok_or(Error::InconsistentStore))
             })
-            .collect::<Result<Vec<MMRDigest>>>()?;
+            .collect::<Result<Vec<P::InnerDigest>>>()?;
         self.bag_rhs_peaks(peaks)?.ok_or(Error::InconsistentStore)
     }
 
-    pub fn bag_rhs_peaks(&self, mut rhs_peaks: Vec<MMRDigest>, two_to_one_hash_param: &TwoToOneParam<P>,) -> Result<Option<MMRDigest>> {
+    pub fn bag_rhs_peaks(&self, mut rhs_peaks: Vec<P::InnerDigest>, two_to_one_hash_param: &TwoToOneParam<P>,) -> Result<Option<P::InnerDigest>> {
         while rhs_peaks.len() > 1 {
             let right_peak = rhs_peaks.pop().expect("pop");
             let left_peak = rhs_peaks.pop().expect("pop");
@@ -477,13 +478,14 @@ impl<P: Config> MerkleMountainRange<P> {
                 Path{
                     leaf_index: index,
                     auth_path: Vec::new(),
+                    mmr_size: self.mmr_size
                 });
         }
 
         let mut pos_list = vec![index];
 
         let peaks = get_peaks(self.mmr_size);
-        let mut path: Vec<MMRDigest> = Vec::new();
+        let mut path: Vec<P::InnerDigest> = Vec::new();
 
         let mut bagging_track = 0;
         for peak_pos in peaks {
@@ -493,12 +495,12 @@ impl<P: Config> MerkleMountainRange<P> {
             } else {
                 bagging_track = 0;
             }
-            self.gen_proof_for_peak(&mut proof, pos_list, peak_pos)?;
+            self.gen_proof_for_peak(&mut path, pos_list, peak_pos)?;
         }
 
         if bagging_track > 1 {
             let rhs_peaks = path.split_off(path.len() - bagging_track);
-            path.push(self.bag_rhs_peaks(rhs_peaks)?.expect("bagging rhs peaks"));
+            path.push(self.bag_rhs_peaks(rhs_peaks, self.two_to_one_hash_param)?.expect("bagging rhs peaks"));
         }
 
         Ok(Path {
@@ -506,6 +508,75 @@ impl<P: Config> MerkleMountainRange<P> {
             auth_path: path,
             mmr_size: self.mmr_size
         })
+    }
+
+    /// generate merkle proof for a peak
+    /// the pos_list must be sorted, otherwise the behaviour is undefined
+    ///
+    /// 1. find a lower tree in peak that can generate a complete merkle proof for position
+    /// 2. find that tree by compare positions
+    /// 3. generate proof for each positions
+    fn gen_proof_for_peak<C: Config>(
+        &self,
+        proof: &mut Vec<C::InnerDigest>,
+        pos_list: Vec<u64>,
+        peak_pos: u64,
+    ) -> Result<()> {
+        // println!("pos_list: {:#?}, peak_pos: {}", pos_list, peak_pos);
+        // do nothing if position itself is the peak
+        if pos_list.len() == 1 && pos_list == [peak_pos] {
+            return Ok(());
+        }
+        // take peak root from store if no positions need to be proof
+        if pos_list.is_empty() {
+            // println!("push! peak_pos: {}", peak_pos);
+            proof.push(
+                self.batch
+                    .get_elem(peak_pos)?
+                    .ok_or(Error::InconsistentStore)?,
+            );
+            return Ok(());
+        }
+
+        let mut queue: VecDeque<_> = pos_list.into_iter().map(|pos| (pos, 0u32)).collect();
+        // Generate sub-tree merkle proof for positions
+        while let Some((pos, height)) = queue.pop_front() {
+            debug_assert!(pos <= peak_pos);
+            if pos == peak_pos {
+                break;
+            }
+
+            // calculate sibling
+            let (sib_pos, parent_pos) = {
+                let next_height = pos_height_in_tree(pos + 1);
+                let sibling_offset = sibling_offset(height);
+                if next_height > height {
+                    // implies pos is right sibling
+                    (pos - sibling_offset, pos + 1)
+                } else {
+                    // pos is left sibling
+                    (pos + sibling_offset, pos + parent_offset(height))
+                }
+            };
+
+            if Some(&sib_pos) == queue.front().map(|(pos, _)| pos) {
+                // drop sibling
+                queue.pop_front();
+            } else {
+                // println!("proof push! sib_position : {}", sib_pos);
+                proof.push(
+                    self.batch
+                        .get_elem(sib_pos)?
+                        .ok_or(Error::InconsistentStore)?,
+                );
+            }
+            if parent_pos < peak_pos {
+                // save pos to tree buf
+                // println!("proof push! par_position : {}", parent_pos);
+                queue.push_back((parent_pos, height + 1));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -552,7 +623,7 @@ pub fn sibling_offset(height: usize) -> usize {
     (2 << height) - 1
 }
 
-pub fn get_peaks(mmr_size: usize) -> Vec<P::InnerDigest> {
+pub fn get_peaks(mmr_size: usize) -> Vec<usize> {
     let mut pos_s = Vec::new();
     let (mut height, mut pos) = left_peak_height_pos(mmr_size);
     pos_s.push(pos);
