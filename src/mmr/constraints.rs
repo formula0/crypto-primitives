@@ -1,5 +1,5 @@
 use crate::crh::TwoToOneCRHSchemeGadget;
-use crate::mmr::{Config, IdentityDigestConverter, get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
+use crate::mmr::{Config, IdentityDigestConverter, VeqDeque, get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
 use crate::{CRHSchemeGadget, Path};
 use crate::mmr::error::{Result as MMRResult, Error as MMRError};
 
@@ -118,6 +118,7 @@ where
         let ns = cs.into();
         let cs = ns.cs();
         f().and_then(|val| {
+            let pos_list: Vec<_> = val.borrow().position_list().collect();
             let path = Vec::new_variable(
                 ark_relations::ns!(cs, "path_bits"),
                 || Ok(&pos_list[..(pos_list.len() - 1)]),
@@ -194,7 +195,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         root: &PG::InnerDigest,
         leaf: &PG::Leaf,
-    ) -> MMRResult<Boolean<ConstraintF>, SynthesisError> {
+    ) -> Result<Boolean<ConstraintF>, SynthesisError> {
         let expected_root = self.calculate_root(leaf_params, two_to_one_params, leaf)?;
         Ok(expected_root.is_eq(root)?)
     }
@@ -206,12 +207,12 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         leaf_params: &LeafParam<PG, P, ConstraintF>,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         leaf: &PG::Leaf,
-    ) -> MMRResult<PG::InnerDigest, SynthesisError> {
+    ) -> Result<PG::InnerDigest, SynthesisError> {
         let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf)?;
         let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash)?;
 
         let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, converted_leaf_hash)?;
-        Self::bagging_peaks_hashes(two_to_one_params, peaks_hashes);
+        Self::bagging_peaks_hashes(two_to_one_params, peak_hashes);
     }
 
     pub fn calculate_peaks_hashes(
