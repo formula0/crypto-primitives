@@ -213,7 +213,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
                 }
             } else {
                 let peak_result = Self::calculate_peak_root(two_to_one_params, leaves, peak_pos, &mut path_iter).unwrap();
-                &peak_result
+                peak_result
             };
 
             peaks_hashes.push(peak_root.clone());
