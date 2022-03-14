@@ -195,11 +195,11 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
         let path_iter = self.auth_path.iter();
         let peaks = get_peaks(self.mmr_size.value().unwrap());    
-        let leaves = vec![(self.leaf_index.value().unwrap(), converted_leaf_hash)];
+        let leaves = vec![(self.leaf_index.value().unwrap(), converted_leaf_hash.clone())];
         let mut peaks_hashes: Vec<PG::InnerDigest> = Vec::with_capacity(peaks.len() + 1);
         for peak_pos in peaks {
-            let mut leaves: Vec<_> = take_while_vec(&mut leaves,|(pos, _)| *pos.value().unwrap() <= peak_pos);
-            let peak_root = if leaves.len() == 1 && leaves[0].0.value().unwrap() == peak_pos {
+            let mut leaves: Vec<_> = take_while_vec(&mut leaves,|(pos, _)| *pos <= peak_pos);
+            let peak_root = if leaves.len() == 1 && leaves[0].0 == peak_pos {
                 // leaf is the peak
                 leaves.remove(0).1
             } else if leaves.is_empty() {
@@ -212,9 +212,9 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
                     break;
                 }
             } else {
-                let peak_resut = Self::calculate_peak_root(two_to_one_params, leaves, peak_pos, &mut path_iter).unwrap();
+                let peak_result = Self::calculate_peak_root(two_to_one_params, leaves, peak_pos, &mut path_iter).unwrap();
                 &peak_result
-            }
+            };
 
             peaks_hashes.push(peak_root.clone());
         }
