@@ -4,8 +4,11 @@ use crate::{CRHSchemeGadget, MMRPath};
 use crate::mmr::error::{Result as MMRResult, Error as MMRError};
 
 use ark_ff::Field;
+use ark_ff::prelude::*;
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::boolean::Boolean;
+use ark_r1cs_std::uint::*;
+
 #[allow(unused)]
 use ark_r1cs_std::prelude::*;
 use ark_r1cs_std::ToBytesGadget;
@@ -98,9 +101,9 @@ pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, Constraint
     /// `auth_path[i]` is the entry of sibling of ith non-leaf node from top to bottom.
     auth_path: Vec<PG::InnerDigest>,
     
-    mmr_size: ConstraintF,
+    mmr_size: make_uint!(UInt64, 64, u64, U64, u64, u64, 64),
 
-    leaf_index: ConstraintF
+    leaf_index: make_uint!(UInt64, 64, u64, U64, u64, u64, 64),
 }
 
 impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> AllocVar<MMRPath<P>, ConstraintF>
@@ -129,12 +132,12 @@ where
                 || Ok(&val.borrow().auth_path[..]),
                 mode,
             )?;
-            let mmr_size = ConstraintF::new_variable(
+            let mmr_size = UInt64::new_variable(
                 ark_relations::ns!(cs, "mmr_size"),
                 || Ok(val.borrow().mmr_size),
                 mode,
             )?;
-            let leaf_index = ConstraintF::new_variable(
+            let leaf_index = UInt64::new_variable(
                 ark_relations::ns!(cs, "leaf_index"),
                 || Ok(val.borrow().leaf_index),
                 mode,
@@ -150,44 +153,9 @@ where
 }
 
 impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P, ConstraintF, PG> {
-    /// Set the leaf index of the path to a given value. Verifier can use function before calling `verify`
-    /// to check the correctness leaf position.
-    /// * `leaf_index`: leaf index encoded in little-endian format
-    #[tracing::instrument(target = "r1cs", skip(self))]
-    pub fn set_leaf_position(&mut self, leaf_index: Vec<Boolean<ConstraintF>>) {
-        // The path to a leaf is described by the branching
-        // decisions taken at each node. This corresponds to the position
-        // of the leaf.
-        let mut path = leaf_index;
 
-        // If leaves are numbered left-to-right starting from zero,
-        // then all left children have odd positions (least significant bit is one), while all
-        // right children have even positions (least significant bit is zero).
-        let leaf_is_right_child = path.remove(0);
-
-        // pad with zero if the length of `path` is too short
-        if path.len() < self.auth_path.len() {
-            path.extend((0..self.auth_path.len() - path.len()).map(|_| Boolean::constant(false)))
-        }
-
-        // truncate if the length of `path` is too long
-        path.truncate(self.auth_path.len());
-
-        // branching decision starts from root, so we need to reverse it.
-        path.reverse();
-
-        self.path = path;
-    }
-
-    /// Return the leaf position index in little-endian form.
-    pub fn get_leaf_position(&self) -> Vec<Boolean<ConstraintF>> {
-        ark_std::iter::once(self.leaf_is_right_child.clone())
-            .chain(self.path.clone().into_iter().rev())
-            .collect()
-    }
-
-    /// Check that hashing a Merkle tree path according to `self`, and
-    /// with `leaf` as the leaf, leads to a Merkle tree root equalling `root`.
+    /// Check that hashing a Merkle mountain range path according to `self`, and
+    /// with `leaf` as the leaf, leads to a Merkle mountain range root equalling `root`.
     #[tracing::instrument(target = "r1cs", skip(self, leaf_params, two_to_one_params))]
     pub fn verify_membership(
         &self,
@@ -196,7 +164,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         root: &PG::InnerDigest,
         leaf: &PG::Leaf,
     ) -> Result<Boolean<ConstraintF>, SynthesisError> {
-        let expected_root = self.calculate_root(leaf_params, two_to_one_params, leaf)?;
+        let expected_root = self.calculate_root(leaf_params, two_to_one_params, leaf).unwrap();
         Ok(expected_root.is_eq(root)?)
     }
 
@@ -208,10 +176,10 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         leaf: &PG::Leaf,
     ) -> Result<PG::InnerDigest, SynthesisError> {
-        let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf)?;
-        let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash)?;
+        let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf).unwrap();
+        let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash).unwrap();
 
-        let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, converted_leaf_hash)?;
+        let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, converted_leaf_hash).unwrap();
         Self::bagging_peaks_hashes(two_to_one_params, peak_hashes);
     }
 
@@ -221,12 +189,12 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         converted_leaf_hash: &PG::InnerDigest,
     ) -> MMRResult<Vec<PG::InnerDigest>> {
         // special handle the only 1 leaf MMR
-        if self.mmr_size == 1 && self.auth_path.len() == 1 {
+        if self.mmr_size.value() == num_traits::One && self.auth_path.len() == 1 {
             return Ok(converted_leaf_hash);
         }
 
         let path_iter = self.auth_path.iter();
-        let peaks = get_peaks(self.mmr_size);    
+        let peaks = get_peaks(self.mmr_size.value());    
         let leaves = vec![(self.leaf_index, converted_leaf_hash)];
         let mut peaks_hashes: Vec<PG::InnerDigest> = Vec::with_capacity(peaks.len() + 1);
         for peak_pos in peaks {
@@ -244,7 +212,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
                     break;
                 }
             } else {
-                Self::calculate_peak_root(leaves, peak_pos, &mut path_iter)?
+                Self::calculate_peak_root(two_to_one_params,leaves, peak_pos, &mut path_iter).unwrap()
             };
             peaks_hashes.push(peak_root.clone());
         }
@@ -303,9 +271,9 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
             };
 
             let parent_item = if next_height > height {
-                PG::TwoToOneHash::compress(two_to_one_params, &sibling_item, &item)?;
+                PG::TwoToOneHash::compress(two_to_one_params, &sibling_item, &item).unwrap();
             } else {
-                PG::TwoToOneHash::compress(two_to_one_params, &item, &sibling_item)?;
+                PG::TwoToOneHash::compress(two_to_one_params, &item, &sibling_item).unwrap();
             };
 
             if parent_pos < peak_pos {
