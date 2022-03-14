@@ -57,7 +57,8 @@ pub trait ConfigGadget<P: Config, ConstraintF: Field> {
         + Sized;
     type LeafInnerConverter: DigestVarConverter<
         Self::LeafDigest,
-        <Self::TwoToOneHash as TwoToOneCRHSchemeGadget<P::TwoToOneHash, ConstraintF>>::InputVar,
+        Self::InnerDigest
+        // <Self::TwoToOneHash as TwoToOneCRHSchemeGadget<P::TwoToOneHash, ConstraintF>>::InputVar,
     >;
     type InnerDigest: AllocVar<P::InnerDigest, ConstraintF>
         + EqGadget<ConstraintF>
