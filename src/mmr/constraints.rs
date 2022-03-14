@@ -180,7 +180,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash).unwrap();
 
         let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, &converted_leaf_hash).unwrap();
-        Self::bagging_peaks_hashes(two_to_one_params, peak_hashes);
+        Self::bagging_peaks_hashes(two_to_one_params, peak_hashes)
     }
 
     pub fn calculate_peaks_hashes(
