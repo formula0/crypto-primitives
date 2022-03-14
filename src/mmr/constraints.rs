@@ -1,5 +1,5 @@
 use crate::crh::TwoToOneCRHSchemeGadget;
-use crate::merkle_tree::{Config, IdentityDigestConverter};
+use crate::merkle_tree::{Config, IdentityDigestConverter, get_peaks, take_while_vec};
 use crate::{CRHSchemeGadget, Path};
 use ark_ff::Field;
 use ark_r1cs_std::alloc::AllocVar;
@@ -95,10 +95,10 @@ pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, Constraint
     path: Vec<Boolean<ConstraintF>>,
     /// `auth_path[i]` is the entry of sibling of ith non-leaf node from top to bottom.
     auth_path: Vec<PG::InnerDigest>,
-    /// The sibling of leaf.
-    leaf_sibling: PG::LeafDigest,
-    /// Is this leaf the right child?
-    leaf_is_right_child: Boolean<ConstraintF>,
+    
+    mmr_size: ConstraintF,
+
+    leaf_index: ConstraintF
 }
 
 impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> AllocVar<Path<P>, ConstraintF>
@@ -116,33 +116,31 @@ where
         let ns = cs.into();
         let cs = ns.cs();
         f().and_then(|val| {
-            let leaf_sibling = PG::LeafDigest::new_variable(
-                ark_relations::ns!(cs, "leaf_sibling"),
-                || Ok(val.borrow().leaf_sibling_hash.clone()),
-                mode,
-            )?;
-            let leaf_position_bit = Boolean::new_variable(
-                ark_relations::ns!(cs, "leaf_position_bit"),
-                || Ok(val.borrow().leaf_index & 1 == 1),
-                mode,
-            )?;
-            let pos_list: Vec<_> = val.borrow().position_list().collect();
             let path = Vec::new_variable(
                 ark_relations::ns!(cs, "path_bits"),
                 || Ok(&pos_list[..(pos_list.len() - 1)]),
                 mode,
             )?;
-
             let auth_path = Vec::new_variable(
                 ark_relations::ns!(cs, "auth_path_nodes"),
                 || Ok(&val.borrow().auth_path[..]),
                 mode,
             )?;
+            let mmr_size = ConstraintF::new_variable(
+                ark_relations::ns!(cs, "mmr_size"),
+                || Ok(val.borrow().mmr_size),
+                mode,
+            )?;
+            let leaf_index = ConstraintF::new_variable(
+                ark_relations::ns!(cs, "leaf_index"),
+                || Ok(val.borrow().leaf_index),
+                mode,
+            )?;
             Ok(PathVar {
                 path,
                 auth_path,
-                leaf_sibling,
-                leaf_is_right_child: leaf_position_bit,
+                mmr_size,
+                leaf_index
             })
         })
     }
@@ -176,7 +174,6 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         path.reverse();
 
         self.path = path;
-        self.leaf_is_right_child = leaf_is_right_child;
     }
 
     /// Return the leaf position index in little-endian form.
@@ -184,51 +181,6 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         ark_std::iter::once(self.leaf_is_right_child.clone())
             .chain(self.path.clone().into_iter().rev())
             .collect()
-    }
-
-    /// Calculate the root of the Merkle tree assuming that `leaf` is the leaf on the path defined by `self`.
-    #[tracing::instrument(target = "r1cs", skip(self, leaf_params, two_to_one_params))]
-    pub fn calculate_root(
-        &self,
-        leaf_params: &LeafParam<PG, P, ConstraintF>,
-        two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        leaf: &PG::Leaf,
-    ) -> Result<PG::InnerDigest, SynthesisError> {
-        let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf)?;
-        let leaf_sibling_hash = &self.leaf_sibling;
-
-        // calculate hash for the bottom non_leaf_layer
-
-        // We assume that when a bit is 0, it indicates that the currently hashed value H is the left child,
-        // and when bit is 1, it indicates our H is the right child.
-        // Thus `left_hash` is sibling if the bit `leaf_is_right_child` is 1, and is leaf otherwise.
-
-        let left_hash = self
-            .leaf_is_right_child
-            .select(leaf_sibling_hash, &claimed_leaf_hash)?;
-        let right_hash = self
-            .leaf_is_right_child
-            .select(&claimed_leaf_hash, leaf_sibling_hash)?;
-
-        // convert leaf digest to inner digest
-        let left_hash = PG::LeafInnerConverter::convert(left_hash)?;
-        let right_hash = PG::LeafInnerConverter::convert(right_hash)?;
-
-        let mut curr_hash =
-            PG::TwoToOneHash::evaluate(two_to_one_params, left_hash.borrow(), right_hash.borrow())?;
-        // To traverse up a MT, we iterate over the path from bottom to top (i.e. in reverse)
-
-        // At any given bit, the bit being 0 indicates our currently hashed value is the left,
-        // and the bit being 1 indicates our currently hashed value is on the right.
-        // Thus `left_hash` is the sibling if bit is 1, and it's the computed hash if bit is 0
-        for (bit, sibling) in self.path.iter().rev().zip(self.auth_path.iter().rev()) {
-            let left_hash = bit.select(sibling, &curr_hash)?;
-            let right_hash = bit.select(&curr_hash, sibling)?;
-
-            curr_hash = PG::TwoToOneHash::compress(two_to_one_params, &left_hash, &right_hash)?;
-        }
-
-        Ok(curr_hash)
     }
 
     /// Check that hashing a Merkle tree path according to `self`, and
@@ -245,37 +197,136 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         Ok(expected_root.is_eq(root)?)
     }
 
-    /// Check that `old_leaf` is the leaf of the Merkle tree on the path defined by
-    /// `self`, and then compute the new root when replacing `old_leaf` by `new_leaf`.
+    /// Calculate the root of the Merkle tree assuming that `leaf` is the leaf on the path defined by `self`.
     #[tracing::instrument(target = "r1cs", skip(self, leaf_params, two_to_one_params))]
-    pub fn update_leaf(
+    pub fn calculate_root(
         &self,
         leaf_params: &LeafParam<PG, P, ConstraintF>,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        old_root: &PG::InnerDigest,
-        old_leaf: &PG::Leaf,
-        new_leaf: &PG::Leaf,
+        leaf: &PG::Leaf,
     ) -> Result<PG::InnerDigest, SynthesisError> {
-        self.verify_membership(leaf_params, two_to_one_params, old_root, old_leaf)?
-            .enforce_equal(&Boolean::TRUE)?;
-        Ok(self.calculate_root(leaf_params, two_to_one_params, new_leaf)?)
+        let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf)?;
+        let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash)?;
+
+        let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, converted_leaf_hash)?;
+        bagging_peaks_hashes(two_to_one_params, peaks_hashes);
     }
 
-    /// Check that `old_leaf` is the leaf of the Merkle tree on the path defined by
-    /// `self`, and then compute the expected new root when replacing `old_leaf` by `new_leaf`.
-    /// Return a boolean indicating whether expected new root equals `new_root`.
-    #[tracing::instrument(target = "r1cs", skip(self, leaf_params, two_to_one_params))]
-    pub fn update_and_check(
-        &self,
-        leaf_params: &LeafParam<PG, P, ConstraintF>,
+    pub fn calculate_peaks_hashes(
+        &self, 
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        old_root: &PG::InnerDigest,
-        new_root: &PG::InnerDigest,
-        old_leaf: &PG::Leaf,
-        new_leaf: &PG::Leaf,
-    ) -> Result<Boolean<ConstraintF>, SynthesisError> {
-        let actual_new_root =
-            self.update_leaf(leaf_params, two_to_one_params, old_root, old_leaf, new_leaf)?;
-        Ok(actual_new_root.is_eq(&new_root)?)
+        converted_leaf_hash: &PG::InnerDigest,
+    ) -> Result<Vec<PG::InnerDigest>> {
+        // special handle the only 1 leaf MMR
+        if mmr_size == 1 && self.auth_path.len() == 1 {
+            return Ok(leaf_hash);
+        }
+
+        let path_iter = self.auth_path.iter();
+        let peaks = get_peaks(self.mmr_size);    
+        let leaves = vec![(self.leaf_index, converted_leaf_hash)];
+        let mut peaks_hashes: Vec<PG::InnerDigest> = Vec::with_capacity(peaks.len() + 1);
+        for peak_pos in peaks {
+            let mut leaves: Vec<_> = take_while_vec(&mut leaves,|(pos, _)| *pos <= peak_pos);
+            let peak_root = if leaves.len() == 1 && leaves[0].0 == peak_pos {
+                // leaf is the peak
+                leaves.remove(0).1
+            } else if leaves.is_empty() {
+                // if empty, means the next proof is a peak root or rhs bagged root
+                if let Some(peak_root) = path_iter.next() {
+                    peak_root.clone()
+                } else {
+                    // means that either all right peaks are bagged, or proof is corrupted
+                    // so we break loop and check no items left
+                    break;
+                }
+            } else {
+                calculate_peak_root(leaves, peak_pos, &mut path_iter)?
+            };
+            peaks_hashes.push(peak_root.clone());
+        }
+    
+        // ensure nothing left in leaves
+        if !leaves.is_empty() {
+            return Err(Error::CorruptedProof);
+        }
+    
+        // check rhs peaks
+        if let Some(rhs_peaks_hashes) = path_iter.next() {
+            peaks_hashes.push(rhs_peaks_hashes.clone());
+        }
+        // ensure nothing left in path_iter
+        if path_iter.next().is_some() {
+            return Err(Error::CorruptedProof);
+        }
+        Ok(peaks_hashes)
+    }
+
+    pub fn calculate_peak_root(
+        two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
+        leaves: Vec<(u64, PG::InnerDigest)>,
+        peak_pos: u64,
+        path_iter: &mut Iterator,
+    ) -> Result<T> {
+        debug_assert!(!leaves.is_empty(), "can't be empty");
+        // (position, hash, height)
+        let mut queue: VecDeque<_> = leaves
+            .into_iter()
+            .map(|(pos, item)| (pos, item, 0u32))
+            .collect();
+
+        // calculate tree root from each items
+        while let Some((pos, item, height)) = queue.pop_front() {
+            if pos == peak_pos {
+                // return root
+                return Ok(item);
+            }
+            // calculate sibling
+            let next_height = pos_height_in_tree(pos + 1);
+            let (sib_pos, parent_pos) = {
+                let sibling_offset = sibling_offset(height);
+                if next_height > height {
+                    // implies pos is right sibling
+                    (pos - sibling_offset, pos + 1)
+                } else {
+                    // pos is left sibling
+                    (pos + sibling_offset, pos + parent_offset(height))
+                }
+            };
+            let sibling_item = if Some(&sib_pos) == queue.front().map(|(pos, _, _)| pos) {
+                queue.pop_front().map(|(_, item, _)| item).unwrap()
+            } else {
+                path_iter.next().ok_or(MMRError::CorruptedProof)?.clone()
+            };
+
+            let parent_item = if next_height > height {
+                PG::TwoToOneHash::compress(two_to_one_params, &sibling_item, &item)?;
+            } else {
+                PG::TwoToOneHash::compress(two_to_one_params, &item, &sibling_item)?;
+            };
+
+            if parent_pos < peak_pos {
+                queue.push_back((parent_pos, parent_item, height + 1));
+            } else {
+                return Ok(parent_item);
+            }
+        }
+        Err(MMRError::CorruptedProof)
+    }
+
+    fn bagging_peaks_hashes(
+        two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
+        mut peaks_hashes: Vec<PG::InnerDigest>,
+    ) -> Result<PG::InnerDigest> {
+        // bagging peaks
+        // bagging from right to left via hash(right, left).
+        while peaks_hashes.len() > 1 {
+            let right_peak = peaks_hashes.pop().expect("pop");
+            let left_peak = peaks_hashes.pop().expect("pop");
+            peaks_hashes.push(PG::TwoToOneHash::compress(two_to_one_params, &right_peak, &left_peak));
+        }
+        peaks_hashes.pop().ok_or(Error::CorruptedProof)
     }
 }
+
+
