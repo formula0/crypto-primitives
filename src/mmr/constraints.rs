@@ -178,14 +178,16 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         leaf: &PG::Leaf,
     ) -> MMRResult<PG::InnerDigest> {
         let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf).unwrap();
-        let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash).unwrap();
+        let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash).unwrap().borrow().clone();
+        let mut leaves = vec![(self.leaf_index.value().unwrap(), converted_leaf_hash.clone())];
 
-        let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, &converted_leaf_hash).unwrap();
+        let peak_hashes = self.calculate_peaks_hashes(leaves, two_to_one_params, &converted_leaf_hash).unwrap();
         Self::bagging_peaks_hashes(two_to_one_params, peak_hashes)
     }
 
     pub fn calculate_peaks_hashes(
         &self, 
+        mut leaves: Vec<(u64, PG::InnerDigest)>,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         converted_leaf_hash: &PG::InnerDigest,
     ) -> MMRResult<Vec<PG::InnerDigest>> {
@@ -194,12 +196,11 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
             return Ok(vec![converted_leaf_hash.clone()]);
         }
 
-        let path_iter = self.auth_path.iter();
+        let mut path_iter = self.auth_path.iter();
         let peaks = get_peaks(self.mmr_size.value().unwrap());    
-        let leaves = vec![(self.leaf_index.value().unwrap(), converted_leaf_hash.clone())];
         let mut peaks_hashes: Vec<PG::InnerDigest> = Vec::with_capacity(peaks.len() + 1);
         for peak_pos in peaks {
-            let mut leaves: Vec<_> = take_while_vec(&mut leaves,|(pos, _)| *pos <= peak_pos);
+            let mut leaves = take_while_vec(&mut leaves, |(pos, _)| *pos <= peak_pos);
             let peak_root = if leaves.len() == 1 && leaves[0].0 == peak_pos {
                 // leaf is the peak
                 leaves.remove(0).1
