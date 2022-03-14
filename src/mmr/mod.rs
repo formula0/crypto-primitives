@@ -80,8 +80,6 @@ pub trait Config {
     type LeafInnerDigestConverter: DigestConverter<
         Self::LeafDigest,
         Self::InnerDigest
-        // <Self::TwoToOneHash as TwoToOneCRHScheme>::Output,
-        // <Self::TwoToOneHash as TwoToOneCRHScheme>::Input,
         >;
     // inner layer
     type InnerDigest: ToBytes + Sized
@@ -348,8 +346,6 @@ fn take_while_vec<T, P: Fn(&T) -> bool>(v: &mut Vec<T>, p: P) -> Vec<T> {
 
 
 
-
-
 /// Defines a merkle mountain range data structure.
 /// This merkle mountain range has runtime fixed height, and assumes number of leaves is 2^height.
 ///
@@ -439,16 +435,6 @@ impl<P: Config> MerkleMountainRange<P> {
                 left_elem.clone(), 
                 right_elem.clone()
             ).unwrap();
-
-            // if pos_height_in_tree(pos + 1) == 2 {
-            //     let leaf_left_elem = P::LeafInnerDigestConverter::convert(left_elem).unwrap();
-            //     let leaf_right_elem = P::LeafInnerDigestConverter::convert(right_elem).unwrap();
-            //     parent_elem =  P::TwoToOneHash::evaluate(
-            //         &self.two_to_one_hash_param.clone(),
-            //         leaf_left_elem,
-            //         leaf_right_elem,
-            //     ).unwrap();
-            // }
 
             elems.push(parent_elem);
             height += 1
@@ -559,7 +545,6 @@ impl<P: Config> MerkleMountainRange<P> {
         pos_list: Vec<u64>,
         peak_pos: u64,
     ) -> MMRResult<()> {
-        // println!("pos_list: {:#?}, peak_pos: {}", pos_list, peak_pos);
         // do nothing if position itself is the peak
         if pos_list.len() == 1 && pos_list == [peak_pos] {
             return Ok(());
@@ -600,7 +585,6 @@ impl<P: Config> MerkleMountainRange<P> {
                 // drop sibling
                 queue.pop_front();
             } else {
-                // println!("proof push! sib_position : {}", sib_pos);
                 proof.push(
                     self.batch
                         .get_elem(sib_pos)?
@@ -608,8 +592,6 @@ impl<P: Config> MerkleMountainRange<P> {
                 );
             }
             if parent_pos < peak_pos {
-                // save pos to tree buf
-                // println!("proof push! par_position : {}", parent_pos);
                 queue.push_back((parent_pos, height + 1));
             }
         }

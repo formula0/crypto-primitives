@@ -4,14 +4,12 @@ use super::error::{Result, Error};
 #[derive(Default)]
 pub struct MMRBatch<Elem> {
     memory_batch: Vec<(u64, Vec<Elem>)>,
-    // store: Store,
 }
 
 impl<Elem: Clone> MMRBatch<Elem> {
     pub fn new() -> Self {
         MMRBatch {
             memory_batch: Vec::new(),
-            // store,
         }
     }
 
@@ -38,28 +36,4 @@ impl<Elem: Clone> MMRBatch<Elem> {
         Err(Error::InvalidArgument)
     }
 
-    // pub fn commit(self) -> Result<()> {
-    //     let Self {
-    //         mut store,
-    //         memory_batch,
-    //     } = self;
-    //     for (pos, elems) in memory_batch {
-    //         store.append(pos, elems)?;
-    //     }
-    //     Ok(())
-    // }
 }
-
-// impl<Elem, Store: MMRStore<Elem>> IntoIterator for MMRBatch<Elem, Store> {
-//     type Item = (u64, Vec<Elem>);
-//     type IntoIter = ark_std::vec::IntoIter<Self::Item>;
-
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.memory_batch.into_iter()
-//     }
-// }
-
-// pub trait MMRStore<Elem> {
-//     fn get_elem(&self, pos: u64) -> Result<Option<Elem>>;
-//     fn append(&mut self, pos: u64, elems: Vec<Elem>) -> Result<()>;
-// }
