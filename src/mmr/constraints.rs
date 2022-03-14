@@ -1,6 +1,6 @@
 use crate::crh::TwoToOneCRHSchemeGadget;
-use crate::mmr::{Config, IdentityDigestConverter, VeqDeque, get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
-use crate::{CRHSchemeGadget, Path};
+use crate::mmr::{Config, IdentityDigestConverter, VecDeque, get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
+use crate::{CRHSchemeGadget, MMRPath};
 use crate::mmr::error::{Result as MMRResult, Error as MMRError};
 
 use ark_ff::Field;
@@ -103,14 +103,14 @@ pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, Constraint
     leaf_index: ConstraintF
 }
 
-impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> AllocVar<Path<P>, ConstraintF>
+impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> AllocVar<MMRPath<P>, ConstraintF>
     for PathVar<P, ConstraintF, PG>
 where
     P: Config,
     ConstraintF: Field,
 {
     #[tracing::instrument(target = "r1cs", skip(cs, f))]
-    fn new_variable<T: Borrow<Path<P>>>(
+    fn new_variable<T: Borrow<MMRPath<P>>>(
         cs: impl Into<Namespace<ConstraintF>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
