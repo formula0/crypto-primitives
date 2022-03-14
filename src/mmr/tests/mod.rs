@@ -6,7 +6,7 @@ mod bytes_mt_tests {
 
     use crate::{
         crh::{pedersen, *},
-        merkle_tree::*,
+        mmr::*,
     };
     use ark_ed_on_bls12_381::EdwardsProjective as JubJub;
     use ark_ff::BigInteger256;
@@ -34,10 +34,11 @@ mod bytes_mt_tests {
         type LeafHash = LeafH;
         type TwoToOneHash = CompressH;
     }
+
     type JubJubMerkleMountainRange = MerkleMountainRange<JubJubMerkleMountainRangeParams>;
 
     /// Pedersen only takes bytes as leaf, so we use `ToBytes` trait.
-    fn merkle_tree_test<L: CanonicalSerialize>(leaves: &[L], update_query: &[(usize, L)]) -> () {
+    fn mmr_test<L: CanonicalSerialize>(leaves: &[L], update_query: &[(usize, L)]) -> () {
         let mut rng = ark_std::test_rng();
         let mut leaves: Vec<_> = leaves
             .iter()
@@ -47,32 +48,15 @@ mod bytes_mt_tests {
         let two_to_one_params = <CompressH as TwoToOneCRHScheme>::setup(&mut rng)
             .unwrap()
             .clone();
-        let mut tree = JubJubMerkleMountainRange::new(
+        let mut mmr = JubJubMerkleMountainRange::new(
             &leaf_crh_params.clone(),
             &two_to_one_params.clone(),
-            leaves.iter().map(|x| x.as_slice()),
-        )
-        .unwrap();
-        let mut root = tree.root();
+        );
+        mmr.push_vec(leaves.iter().map(|x| x.as_slice()));
+        let mut root = mmr.get_root().unwrap();
         // test merkle tree functionality without update
         for (i, leaf) in leaves.iter().enumerate() {
-            let proof = tree.generate_proof(i).unwrap();
-            assert!(proof
-                .verify(&leaf_crh_params, &two_to_one_params, &root, leaf.as_slice())
-                .unwrap());
-        }
-
-        // test merkle tree update functionality
-        for (i, v) in update_query {
-            let v = crate::to_unchecked_bytes!(v).unwrap();
-            tree.update(*i, &v).unwrap();
-            leaves[*i] = v.clone();
-        }
-        // update the root
-        root = tree.root();
-        // verify again
-        for (i, leaf) in leaves.iter().enumerate() {
-            let proof = tree.generate_proof(i).unwrap();
+            let proof = mmr.generate_proof(i as u64).unwrap();
             assert!(proof
                 .verify(&leaf_crh_params, &two_to_one_params, &root, leaf.as_slice())
                 .unwrap());
@@ -87,7 +71,7 @@ mod bytes_mt_tests {
         for _ in 0..2u8 {
             leaves.push(BigInteger256::rand(&mut rng));
         }
-        merkle_tree_test(
+        mmr_test(
             &leaves,
             &vec![
                 (0, BigInteger256::rand(&mut rng)),
@@ -99,13 +83,13 @@ mod bytes_mt_tests {
         for _ in 0..4u8 {
             leaves.push(BigInteger256::rand(&mut rng));
         }
-        merkle_tree_test(&leaves, &vec![(3, BigInteger256::rand(&mut rng))]);
+        mmr_test(&leaves, &vec![(3, BigInteger256::rand(&mut rng))]);
 
         let mut leaves = Vec::new();
         for _ in 0..128u8 {
             leaves.push(BigInteger256::rand(&mut rng));
         }
-        merkle_tree_test(
+        mmr_test(
             &leaves,
             &vec![
                 (2, BigInteger256::rand(&mut rng)),
@@ -120,8 +104,8 @@ mod bytes_mt_tests {
 
 mod field_mt_tests {
     use crate::crh::poseidon;
-    use crate::merkle_tree::tests::test_utils::poseidon_parameters;
-    use crate::merkle_tree::{Config, IdentityDigestConverter};
+    use crate::mmr::tests::test_utils::poseidon_parameters;
+    use crate::mmr::{Config, IdentityDigestConverter};
     use crate::MerkleMountainRange;
     use ark_std::{test_rng, One, UniformRand};
 
@@ -141,23 +125,23 @@ mod field_mt_tests {
 
     type FieldMT = MerkleMountainRange<FieldMTConfig>;
 
-    fn merkle_tree_test(leaves: &[Vec<F>], update_query: &[(usize, Vec<F>)]) -> () {
+    fn mmr_test(leaves: &[Vec<F>], update_query: &[(usize, Vec<F>)]) -> () {
         let mut leaves = leaves.to_vec();
         let leaf_crh_params = poseidon_parameters();
         let two_to_one_params = leaf_crh_params.clone();
 
-        let mut tree = FieldMT::new(
+        let mut mmr = FieldMT::new(
             &leaf_crh_params,
             &two_to_one_params,
-            leaves.iter().map(|x| x.as_slice()),
-        )
-        .unwrap();
+        );
 
-        let mut root = tree.root();
+        mmr.push_vec(leaves.iter().map(|x| x.as_slice()));
+
+        let mut root = mmr.get_root().unwrap();
 
         // test merkle tree functionality without update
         for (i, leaf) in leaves.iter().enumerate() {
-            let proof = tree.generate_proof(i).unwrap();
+            let proof = mmr.generate_proof(i as u64).unwrap();
             assert!(proof
                 .verify(&leaf_crh_params, &two_to_one_params, &root, leaf.as_slice())
                 .unwrap());
@@ -166,7 +150,7 @@ mod field_mt_tests {
         {
             // wrong root should lead to error but do not panic
             let wrong_root = root + F::one();
-            let proof = tree.generate_proof(0).unwrap();
+            let proof = mmr.generate_proof(0).unwrap();
             assert!(!proof
                 .verify(
                     &leaf_crh_params,
@@ -175,23 +159,6 @@ mod field_mt_tests {
                     leaves[0].as_slice()
                 )
                 .unwrap())
-        }
-
-        // test merkle tree update functionality
-        for (i, v) in update_query {
-            tree.update(*i, v).unwrap();
-            leaves[*i] = v.to_vec();
-        }
-
-        // update the root
-        root = tree.root();
-
-        // verify again
-        for (i, leaf) in leaves.iter().enumerate() {
-            let proof = tree.generate_proof(i).unwrap();
-            assert!(proof
-                .verify(&leaf_crh_params, &two_to_one_params, &root, leaf.as_slice())
-                .unwrap());
         }
     }
 
@@ -204,7 +171,7 @@ mod field_mt_tests {
         for _ in 0..128u8 {
             leaves.push(rand_leaves())
         }
-        merkle_tree_test(
+        mmr_test(
             &leaves,
             &vec![
                 (2, rand_leaves()),

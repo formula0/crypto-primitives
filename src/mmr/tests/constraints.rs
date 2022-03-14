@@ -1,8 +1,8 @@
 mod byte_mt_tests {
     use crate::crh::{pedersen, TwoToOneCRHScheme, TwoToOneCRHSchemeGadget};
 
-    use crate::merkle_tree::constraints::{BytesVarDigestConverter, ConfigGadget};
-    use crate::merkle_tree::{ByteDigestConverter, Config};
+    use crate::mmr::constraints::{BytesVarDigestConverter, ConfigGadget};
+    use crate::mmr::{ByteDigestConverter, Config};
     use crate::{CRHScheme, CRHSchemeGadget, MerkleMountainRange, PathVar};
     use ark_ed_on_bls12_381::{constraints::EdwardsVar, EdwardsProjective as JubJub, Fq};
     #[allow(unused)]
@@ -52,7 +52,7 @@ mod byte_mt_tests {
     type JubJubMerkleMountainRange = MerkleMountainRange<JubJubMerkleMountainRangeParams>;
 
     /// Generate a merkle tree, its constraints, and test its constraints
-    fn merkle_tree_test(
+    fn mmr_test(
         leaves: &[Vec<u8>],
         use_bad_root: bool,
         update_query: Option<(usize, Vec<u8>)>,
@@ -61,16 +61,17 @@ mod byte_mt_tests {
 
         let leaf_crh_params = <LeafH as CRHScheme>::setup(&mut rng).unwrap();
         let two_to_one_crh_params = <CompressH as TwoToOneCRHScheme>::setup(&mut rng).unwrap();
-        let mut tree = JubJubMerkleMountainRange::new(
+        let mut mmr = JubJubMerkleMountainRange::new(
             &leaf_crh_params,
             &two_to_one_crh_params,
-            leaves.iter().map(|v| v.as_slice()),
-        )
-        .unwrap();
-        let root = tree.root();
+        );
+
+        mmr.push_vec(leaves.iter().map(|v| v.as_slice()));
+
+        let root = mmr.get_root().unwrap;
         for (i, leaf) in leaves.iter().enumerate() {
             let cs = ConstraintSystem::<Fq>::new_ref();
-            let proof = tree.generate_proof(i).unwrap();
+            let proof = mmr.generate_proof(i).unwrap();
             assert!(proof
                 .verify(
                     &leaf_crh_params,
@@ -155,65 +156,6 @@ mod byte_mt_tests {
                 "verification constraints not satisfied"
             );
         }
-
-        // check update
-        if let Some(update_query) = update_query {
-            let cs = ConstraintSystem::<Fq>::new_ref();
-            // allocate parameters for CRH
-            let leaf_crh_params_var =
-                <LeafHG as CRHSchemeGadget<LeafH, _>>::ParametersVar::new_constant(
-                    ark_relations::ns!(cs, "leaf_crh_parameter"),
-                    &leaf_crh_params,
-                )
-                .unwrap();
-            let two_to_one_crh_params_var =
-                <CompressHG as TwoToOneCRHSchemeGadget<CompressH, _>>::ParametersVar::new_constant(
-                    ark_relations::ns!(cs, "two_to_one_crh_parameter"),
-                    &two_to_one_crh_params,
-                )
-                .unwrap();
-
-            // allocate old leaf and new leaf
-            let old_leaf_var =
-                UInt8::new_input_vec(ark_relations::ns!(cs, "old_leaf"), &leaves[update_query.0])
-                    .unwrap();
-            let new_leaf_var =
-                UInt8::new_input_vec(ark_relations::ns!(cs, "new_leaf"), &update_query.1).unwrap();
-            //
-            // suppose the verifier already knows old root, new root, old leaf, new leaf, and the original path (so they are public)
-            let old_root = tree.root();
-            let old_root_var = <LeafHG as CRHSchemeGadget<LeafH, _>>::OutputVar::new_input(
-                ark_relations::ns!(cs, "old_root"),
-                || Ok(old_root),
-            )
-            .unwrap();
-            let old_path = tree.generate_proof(update_query.0).unwrap();
-            let old_path_var: PathVar<JubJubMerkleMountainRangeParams, Fq, JubJubMerkleMountainRangeParamsVar> =
-                PathVar::new_input(ark_relations::ns!(cs, "old_path"), || Ok(old_path)).unwrap();
-            let new_root = {
-                tree.update(update_query.0, &update_query.1).unwrap();
-                tree.root()
-            };
-            let new_root_var = <LeafHG as CRHSchemeGadget<LeafH, _>>::OutputVar::new_input(
-                ark_relations::ns!(cs, "new_root"),
-                || Ok(new_root),
-            )
-            .unwrap();
-            // verifier need to get a proof (the witness) to show the known new root is correct
-            assert!(old_path_var
-                .update_and_check(
-                    &leaf_crh_params_var,
-                    &two_to_one_crh_params_var,
-                    &old_root_var,
-                    &new_root_var,
-                    &old_leaf_var,
-                    &new_leaf_var,
-                )
-                .unwrap()
-                .value()
-                .unwrap());
-            assert!(cs.is_satisfied().unwrap())
-        }
     }
 
     #[test]
@@ -223,7 +165,7 @@ mod byte_mt_tests {
             let input = vec![i; 30];
             leaves.push(input);
         }
-        merkle_tree_test(&leaves, false, Some((3usize, vec![7u8; 30])));
+        mmr_test(&leaves, false, Some((3usize, vec![7u8; 30])));
     }
 
     #[test]
@@ -234,15 +176,15 @@ mod byte_mt_tests {
             let input = vec![i; 30];
             leaves.push(input);
         }
-        merkle_tree_test(&leaves, true, None);
+        mmr_test(&leaves, true, None);
     }
 }
 
 mod field_mt_tests {
     use crate::crh::{poseidon, TwoToOneCRHSchemeGadget};
-    use crate::merkle_tree::constraints::ConfigGadget;
-    use crate::merkle_tree::tests::test_utils::poseidon_parameters;
-    use crate::merkle_tree::{Config, IdentityDigestConverter};
+    use crate::mmr::constraints::ConfigGadget;
+    use crate::mmr::tests::test_utils::poseidon_parameters;
+    use crate::mmr::{Config, IdentityDigestConverter};
     use crate::{CRHSchemeGadget, MerkleMountainRange, PathVar};
     use ark_r1cs_std::alloc::AllocVar;
     use ark_r1cs_std::fields::fp::FpVar;
@@ -282,20 +224,21 @@ mod field_mt_tests {
 
     type FieldMT = MerkleMountainRange<FieldMTConfig>;
 
-    fn merkle_tree_test(
+    fn mmr_test(
         leaves: &[Vec<F>],
         use_bad_root: bool,
         update_query: Option<(usize, Vec<F>)>,
     ) {
         let leaf_crh_params = poseidon_parameters();
         let two_to_one_params = leaf_crh_params.clone();
-        let mut tree = FieldMT::new(
+        let mut mmr = FieldMT::new(
             &leaf_crh_params,
             &two_to_one_params,
-            leaves.iter().map(|x| x.as_slice()),
-        )
-        .unwrap();
-        let root = tree.root();
+        );
+
+        mmr.push_vec(leaves.iter().map(|x| x.as_slice()));
+
+        let root = mmr.get_root().unwrap();
         for (i, leaf) in leaves.iter().enumerate() {
             let cs = ConstraintSystem::<F>::new_ref();
             let proof = tree.generate_proof(i).unwrap();
@@ -394,65 +337,6 @@ mod field_mt_tests {
             );
         }
 
-        // check update
-
-        if let Some(update_query) = update_query {
-            let cs = ConstraintSystem::<F>::new_ref();
-            // allocate parameters for CRH
-            let leaf_crh_params_var = <HG as CRHSchemeGadget<H, _>>::ParametersVar::new_constant(
-                ark_relations::ns!(cs, "leaf_crh_params"),
-                &leaf_crh_params,
-            )
-            .unwrap();
-
-            let two_to_one_crh_params_var =
-                <TwoToOneHG as TwoToOneCRHSchemeGadget<TwoToOneH, _>>::ParametersVar::new_constant(
-                    ark_relations::ns!(cs, "two_to_one_params"),
-                    &leaf_crh_params,
-                )
-                .unwrap();
-
-            let old_leaf_var: Vec<_> = leaves[update_query.0]
-                .iter()
-                .map(|x| FpVar::new_input(cs.clone(), || Ok(*x)).unwrap())
-                .collect();
-            let new_leaf_var: Vec<_> = update_query
-                .1
-                .iter()
-                .map(|x| FpVar::new_input(cs.clone(), || Ok(*x)).unwrap())
-                .collect();
-
-            let old_root = tree.root();
-            let old_root_var = FpVar::new_input(cs.clone(), || Ok(old_root)).unwrap();
-
-            let old_path = tree.generate_proof(update_query.0).unwrap();
-            let old_path_var = PathVar::<FieldMTConfig, F, FieldMTConfigVar>::new_input(
-                ark_relations::ns!(cs, "old_path"),
-                || Ok(old_path),
-            )
-            .unwrap();
-            let new_root = {
-                tree.update(update_query.0, update_query.1.as_slice())
-                    .unwrap();
-                tree.root()
-            };
-            let new_root_var = FpVar::new_witness(cs.clone(), || Ok(new_root)).unwrap();
-
-            assert!(old_path_var
-                .update_and_check(
-                    &leaf_crh_params_var,
-                    &two_to_one_crh_params_var,
-                    &old_root_var,
-                    &new_root_var,
-                    &old_leaf_var,
-                    &new_leaf_var
-                )
-                .unwrap()
-                .value()
-                .unwrap());
-
-            assert!(cs.is_satisfied().unwrap())
-        }
     }
 
     #[test]
@@ -465,7 +349,7 @@ mod field_mt_tests {
             leaves.push(rand_leaves())
         }
 
-        merkle_tree_test(&leaves, false, Some((3, rand_leaves())))
+        mmr_test(&leaves, false, Some((3, rand_leaves())))
     }
 
     #[test]
@@ -479,6 +363,6 @@ mod field_mt_tests {
             leaves.push(rand_leaves())
         }
 
-        merkle_tree_test(&leaves, true, Some((3, rand_leaves())))
+        mmr_test(&leaves, true, Some((3, rand_leaves())))
     }
 }
