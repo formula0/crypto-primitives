@@ -101,9 +101,9 @@ pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, Constraint
     /// `auth_path[i]` is the entry of sibling of ith non-leaf node from top to bottom.
     auth_path: Vec<PG::InnerDigest>,
     
-    mmr_size: UInt64,
+    mmr_size: UInt64<ConstraintF>,
 
-    leaf_index: UInt64,
+    leaf_index: UInt64<ConstraintF>,
 }
 
 impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> AllocVar<MMRPath<P>, ConstraintF>
