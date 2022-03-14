@@ -7,7 +7,7 @@ use ark_ff::Field;
 use ark_ff::prelude::*;
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::boolean::Boolean;
-use ark_r1cs_std::uint::*;
+use ark_r1cs_std::uint64::UInt64;
 
 #[allow(unused)]
 use ark_r1cs_std::prelude::*;
@@ -101,9 +101,9 @@ pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, Constraint
     /// `auth_path[i]` is the entry of sibling of ith non-leaf node from top to bottom.
     auth_path: Vec<PG::InnerDigest>,
     
-    mmr_size: make_uint!(UInt64, 64, u64, U64, u64, u64, 64),
+    mmr_size: UInt64,
 
-    leaf_index: make_uint!(UInt64, 64, u64, U64, u64, u64, 64),
+    leaf_index: UInt64,
 }
 
 impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> AllocVar<MMRPath<P>, ConstraintF>
@@ -179,7 +179,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf).unwrap();
         let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash).unwrap();
 
-        let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, converted_leaf_hash).unwrap();
+        let peak_hashes = self.calculate_peaks_hashes(two_to_one_params, &converted_leaf_hash).unwrap();
         Self::bagging_peaks_hashes(two_to_one_params, peak_hashes);
     }
 
@@ -189,8 +189,8 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         converted_leaf_hash: &PG::InnerDigest,
     ) -> MMRResult<Vec<PG::InnerDigest>> {
         // special handle the only 1 leaf MMR
-        if self.mmr_size.value() == num_traits::One && self.auth_path.len() == 1 {
-            return Ok(converted_leaf_hash);
+        if self.mmr_size.value() == 1 && self.auth_path.len() == 1 {
+            return Ok(vec![converted_leaf_hash]);
         }
 
         let path_iter = self.auth_path.iter();
@@ -237,7 +237,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         leaves: Vec<(u64, PG::InnerDigest)>,
         peak_pos: u64,
-        path_iter: &mut Iterator<Item = PG::InnerDigest>,
+        path_iter: &mut Iterator<Item = &PG::InnerDigest>,
     ) -> MMRResult<PG::InnerDigest> {
         debug_assert!(!leaves.is_empty(), "can't be empty");
         // (position, hash, height)
@@ -270,10 +270,10 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
                 path_iter.next().ok_or(MMRError::CorruptedProof)?.clone()
             };
 
-            let parent_item = if next_height > height {
-                PG::TwoToOneHash::compress(two_to_one_params, &sibling_item, &item).unwrap();
+            let parent_item: PG::InnerDigest = if next_height > height {
+                PG::TwoToOneHash::compress(two_to_one_params, &sibling_item, &item).unwrap()
             } else {
-                PG::TwoToOneHash::compress(two_to_one_params, &item, &sibling_item).unwrap();
+                PG::TwoToOneHash::compress(two_to_one_params, &item, &sibling_item).unwrap()
             };
 
             if parent_pos < peak_pos {
@@ -294,7 +294,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         while peaks_hashes.len() > 1 {
             let right_peak = peaks_hashes.pop().expect("pop");
             let left_peak = peaks_hashes.pop().expect("pop");
-            peaks_hashes.push(PG::TwoToOneHash::compress(two_to_one_params, &right_peak, &left_peak));
+            peaks_hashes.push(PG::TwoToOneHash::compress(two_to_one_params, &right_peak, &left_peak).unwrap());
         }
         peaks_hashes.pop().ok_or(MMRError::CorruptedProof)
     }
