@@ -1,6 +1,6 @@
 [package]
 name = "mmr-crypto-primitives"
-version = "0.1.7"
+version = "0.1.8"
 authors = [ "formula0", "arkworks contributors" ]
 description = "ark-crypto-primitives fork: mmr gadget implement"
 repository = "https://github.com/formula0/crypto-primitives"
