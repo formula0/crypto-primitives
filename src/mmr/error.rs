@@ -13,7 +13,7 @@ pub enum Error {
 }
 
 impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use Error::*;
         match self {
             InvalidArgument => write!(f, "Invalid Argument")?,
