@@ -128,6 +128,28 @@ where
         let right_input = right_input.to_bytes()?;
         Self::evaluate(parameters, &left_input, &right_input)
     }
+
+    #[tracing::instrument(target = "r1cs", skip(parameters))]
+    fn left_compress( 
+        parameters: &Self::ParametersVar,
+        left_input: &Self::OutputVar,
+        right_input:&Self::InputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        // convert output to bytes
+        let left_input = left_input.to_bytes()?;
+        Self::evaluate(parameters, &left_input, right_input)
+    }
+
+    #[tracing::instrument(target = "r1cs", skip(parameters))]
+    fn right_compress(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::InputVar,
+        right_input: &Self::OutputVar
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        // convert output to bytes
+        let right_input = right_input.to_bytes()?;
+        Self::evaluate(parameters, left_input, &right_input)
+    }
 }
 
 impl<C, GG> AllocVar<Parameters<C>, ConstraintF<C>> for CRHParametersVar<C, GG>

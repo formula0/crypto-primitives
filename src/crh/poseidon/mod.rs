@@ -7,6 +7,8 @@ use ark_std::borrow::Borrow;
 use ark_std::marker::PhantomData;
 use ark_std::rand::Rng;
 
+use super::MMRTwoToOneCRHScheme;
+
 #[cfg(feature = "r1cs")]
 pub mod constraints;
 
@@ -58,7 +60,7 @@ impl<F: PrimeField + Absorb> TwoToOneCRHScheme for TwoToOneCRH<F> {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, Error> {
-        Self::compress(parameters, left_input, right_input)
+        <Self as TwoToOneCRHScheme>::compress(parameters, left_input, right_input)
     }
 
     fn compress<T: Borrow<Self::Output>>(
@@ -74,5 +76,49 @@ impl<F: PrimeField + Absorb> TwoToOneCRHScheme for TwoToOneCRH<F> {
         sponge.absorb(right_input);
         let res = sponge.squeeze_field_elements::<F>(1);
         Ok(res[0])
+    }
+}
+
+impl<F: PrimeField + Absorb> MMRTwoToOneCRHScheme for TwoToOneCRH<F> {
+    type Input = F;
+    type Output = F;
+    type Parameters = PoseidonParameters<F>;
+
+    fn setup<R: Rng>(_rng: &mut R) -> Result<Self::Parameters, Error> {
+        // automatic generation of parameters are not implemented yet
+        // therefore, the developers must specify the parameters themselves
+        unimplemented!()
+    }
+
+    fn evaluate<T: Borrow<Self::Input>>(
+        parameters: &Self::Parameters,
+        left_input: T,
+        right_input: T,
+    ) -> Result<Self::Output, Error> {
+        <Self as MMRTwoToOneCRHScheme>::compress(parameters, left_input, right_input)
+    }
+
+    fn compress<T: Borrow<Self::Output>>(
+        parameters: &Self::Parameters,
+        left_input: T,
+        right_input: T,
+    ) -> Result<Self::Output, Error> {
+        <Self as MMRTwoToOneCRHScheme>::compress(parameters, left_input, right_input)
+    }
+
+    fn left_compress( 
+        parameters: &Self::Parameters,
+        left_input: &Self::Output,
+        right_input: &Self::Input,
+    ) -> Result<Self::Output, Error> {
+        <Self as MMRTwoToOneCRHScheme>::compress(parameters, left_input, right_input)
+    }
+
+    fn right_compress(
+        parameters: &Self::Parameters,
+        left_input: &Self::Input,
+        right_input: &Self::Output,
+    ) -> Result<Self::Output, Error> {
+        <Self as MMRTwoToOneCRHScheme>::compress(parameters, left_input, right_input)
     }
 }
