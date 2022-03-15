@@ -38,9 +38,9 @@ mod bytes_mt_tests {
     type JubJubMerkleMountainRange = MerkleMountainRange<JubJubMerkleMountainRangeParams>;
 
     /// Pedersen only takes bytes as leaf, so we use `ToBytes` trait.
-    fn mmr_test<L: CanonicalSerialize>(leaves: &[L], update_query: &[(usize, L)]) -> () {
+    fn mmr_test<L: CanonicalSerialize>(leaves: &[L]) -> () {
         let mut rng = ark_std::test_rng();
-        let mut leaves: Vec<_> = leaves
+        let leaves: Vec<_> = leaves
             .iter()
             .map(|leaf| crate::to_unchecked_bytes!(leaf).unwrap())
             .collect();
@@ -52,8 +52,8 @@ mod bytes_mt_tests {
             &leaf_crh_params.clone(),
             &two_to_one_params.clone(),
         );
-        mmr.push_vec(leaves.iter().map(|x| x.as_slice()));
-        let mut root = mmr.get_root().unwrap();
+        mmr.push_vec(leaves.iter().map(|x| x.as_slice())).expect("push error");
+        let root = mmr.get_root().unwrap();
         // test merkle tree functionality without update
         for (i, leaf) in leaves.iter().enumerate() {
             let proof = mmr.generate_proof(i as u64).unwrap();
@@ -71,34 +71,19 @@ mod bytes_mt_tests {
         for _ in 0..2u8 {
             leaves.push(BigInteger256::rand(&mut rng));
         }
-        mmr_test(
-            &leaves,
-            &vec![
-                (0, BigInteger256::rand(&mut rng)),
-                (1, BigInteger256::rand(&mut rng)),
-            ],
-        );
+        mmr_test(&leaves);
 
         let mut leaves = Vec::new();
         for _ in 0..4u8 {
             leaves.push(BigInteger256::rand(&mut rng));
         }
-        mmr_test(&leaves, &vec![(3, BigInteger256::rand(&mut rng))]);
+        mmr_test(&leaves);
 
         let mut leaves = Vec::new();
         for _ in 0..128u8 {
             leaves.push(BigInteger256::rand(&mut rng));
         }
-        mmr_test(
-            &leaves,
-            &vec![
-                (2, BigInteger256::rand(&mut rng)),
-                (3, BigInteger256::rand(&mut rng)),
-                (5, BigInteger256::rand(&mut rng)),
-                (111, BigInteger256::rand(&mut rng)),
-                (127, BigInteger256::rand(&mut rng)),
-            ],
-        );
+        mmr_test(&leaves);
     }
 }
 
@@ -125,8 +110,8 @@ mod field_mt_tests {
 
     type FieldMT = MerkleMountainRange<FieldMTConfig>;
 
-    fn mmr_test(leaves: &[Vec<F>], update_query: &[(usize, Vec<F>)]) -> () {
-        let mut leaves = leaves.to_vec();
+    fn mmr_test(leaves: &[Vec<F>]) -> () {
+        let leaves = leaves.to_vec();
         let leaf_crh_params = poseidon_parameters();
         let two_to_one_params = leaf_crh_params.clone();
 
@@ -135,9 +120,9 @@ mod field_mt_tests {
             &two_to_one_params,
         );
 
-        mmr.push_vec(leaves.iter().map(|x| x.as_slice()));
+        mmr.push_vec(leaves.iter().map(|x| x.as_slice())).expect("push error");
 
-        let mut root = mmr.get_root().unwrap();
+        let root = mmr.get_root().unwrap();
 
         // test merkle tree functionality without update
         for (i, leaf) in leaves.iter().enumerate() {
@@ -171,15 +156,6 @@ mod field_mt_tests {
         for _ in 0..128u8 {
             leaves.push(rand_leaves())
         }
-        mmr_test(
-            &leaves,
-            &vec![
-                (2, rand_leaves()),
-                (3, rand_leaves()),
-                (5, rand_leaves()),
-                (111, rand_leaves()),
-                (127, rand_leaves()),
-            ],
-        )
+        mmr_test(&leaves);
     }
 }
