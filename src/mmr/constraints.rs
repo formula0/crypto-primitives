@@ -1,5 +1,5 @@
 use crate::crh::TwoToOneCRHSchemeGadget;
-use crate::mmr::{Config, IdentityDigestConverter, VecDeque, get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
+use crate::mmr::{MMRDigest, Config, IdentityDigestConverter, VecDeque, get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
 use crate::{CRHSchemeGadget, MMRPath};
 use crate::mmr::error::{Result as MMRResult, Error as MMRError};
 
@@ -93,6 +93,7 @@ type TwoToOneParam<PG, P, ConstraintF> =
         ConstraintF,
     >>::ParametersVar;
 
+
 /// Represents a merkle tree path gadget.
 #[derive(Debug, Derivative)]
 #[derivative(Clone(bound = "P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>"))]
@@ -100,7 +101,7 @@ pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, Constraint
     /// `path[i]` is 0 (false) iff ith non-leaf node from top to bottom is left.
     path: Vec<Boolean<ConstraintF>>,
     /// `auth_path[i]` is the entry of sibling of ith non-leaf node from top to bottom.
-    auth_path: Vec<PG::InnerDigest>,
+    auth_path: Vec<MMRDigest<PG>>,
     
     mmr_size: UInt64<ConstraintF>,
 
@@ -178,16 +179,15 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         leaf: &PG::Leaf,
     ) -> MMRResult<PG::InnerDigest> {
         let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf).unwrap();
-        let converted_leaf_hash = PG::LeafInnerConverter::convert(claimed_leaf_hash).unwrap().borrow().clone();
-        let mut leaves = vec![(self.leaf_index.value().unwrap(), converted_leaf_hash.clone())];
+        let mut leaves = vec![(self.leaf_index.value().unwrap(), claimed_leaf_hash.clone())];
 
-        let peak_hashes = self.calculate_peaks_hashes(leaves, two_to_one_params, &converted_leaf_hash).unwrap();
+        let peak_hashes = self.calculate_peaks_hashes(leaves, two_to_one_params, &claimed_leaf_hash).unwrap();
         Self::bagging_peaks_hashes(two_to_one_params, peak_hashes)
     }
 
     pub fn calculate_peaks_hashes(
         &self, 
-        mut leaves: Vec<(u64, PG::InnerDigest)>,
+        mut leaves: Vec<(u64, PG::LeafDigest)>,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         converted_leaf_hash: &PG::InnerDigest,
     ) -> MMRResult<Vec<PG::InnerDigest>> {
@@ -239,9 +239,9 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
     pub fn calculate_peak_root(
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        leaves: Vec<(u64, PG::InnerDigest)>,
+        leaves: Vec<(u64, PG::LeafDigest)>,
         peak_pos: u64,
-        path_iter: &mut Iterator<Item = &PG::InnerDigest>,
+        path_iter: &mut Iterator<Item = &MMRDigest<PG>>,
     ) -> MMRResult<PG::InnerDigest> {
         debug_assert!(!leaves.is_empty(), "can't be empty");
         // (position, hash, height)
