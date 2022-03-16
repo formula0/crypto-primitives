@@ -103,7 +103,14 @@ impl<F: PrimeField + Absorb> MMRTwoToOneCRHScheme for TwoToOneCRH<F> {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, Error> {
-        <Self as MMRTwoToOneCRHScheme>::compress(parameters, left_input, right_input)
+        let left_input = left_input.borrow();
+        let right_input = right_input.borrow();
+
+        let mut sponge = PoseidonSponge::new(parameters);
+        sponge.absorb(left_input);
+        sponge.absorb(right_input);
+        let res = sponge.squeeze_field_elements::<F>(1);
+        Ok(res[0])
     }
 
     fn left_compress( 
