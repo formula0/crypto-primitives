@@ -52,11 +52,11 @@ mod bytes_mt_tests {
             &leaf_crh_params.clone(),
             &two_to_one_params.clone(),
         );
-        mmr.push_vec(leaves.iter().map(|x| x.as_slice())).expect("push error");
+        let positions = mmr.push_vec(leaves.iter().map(|x| x.as_slice())).expect("push error");
         let root = mmr.get_root().unwrap();
         // test merkle tree functionality without update
         for (i, leaf) in leaves.iter().enumerate() {
-            let proof = mmr.generate_proof(i as u64).unwrap();
+            let proof = mmr.generate_proof(positions[i] as u64).unwrap();
             assert!(proof
                 .verify(&leaf_crh_params, &two_to_one_params, &root, leaf.as_slice())
                 .unwrap());
@@ -87,7 +87,7 @@ mod bytes_mt_tests {
     }
 }
 
-mod field_mt_tests {
+mod field_mmr_tests {
     use crate::crh::poseidon;
     use crate::mmr::tests::test_utils::poseidon_parameters;
     use crate::mmr::{Config, IdentityDigestConverter};
@@ -98,8 +98,8 @@ mod field_mt_tests {
     type H = poseidon::CRH<F>;
     type TwoToOneH = poseidon::TwoToOneCRH<F>;
 
-    struct FieldMTConfig;
-    impl Config for FieldMTConfig {
+    struct FieldMMRConfig;
+    impl Config for FieldMMRConfig {
         type Leaf = [F];
         type LeafDigest = F;
         type LeafInnerDigestConverter = IdentityDigestConverter<F>;
@@ -108,25 +108,25 @@ mod field_mt_tests {
         type TwoToOneHash = TwoToOneH;
     }
 
-    type FieldMT = MerkleMountainRange<FieldMTConfig>;
+    type FieldMMR = MerkleMountainRange<FieldMMRConfig>;
 
     fn mmr_test(leaves: &[Vec<F>]) -> () {
         let leaves = leaves.to_vec();
         let leaf_crh_params = poseidon_parameters();
         let two_to_one_params = leaf_crh_params.clone();
 
-        let mut mmr = FieldMT::new(
+        let mut mmr = FieldMMR::new(
             &leaf_crh_params,
             &two_to_one_params,
         );
 
-        mmr.push_vec(leaves.iter().map(|x| x.as_slice())).expect("push error");
+        let positions = mmr.push_vec(leaves.iter().map(|x| x.as_slice())).expect("push error");
 
         let root = mmr.get_root().unwrap();
 
         // test merkle tree functionality without update
         for (i, leaf) in leaves.iter().enumerate() {
-            let proof = mmr.generate_proof(i as u64).unwrap();
+            let proof = mmr.generate_proof(positions[i] as u64).unwrap();
             assert!(proof
                 .verify(&leaf_crh_params, &two_to_one_params, &root, leaf.as_slice())
                 .unwrap());

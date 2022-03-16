@@ -104,7 +104,7 @@ pub trait Config {
     
 }
 
-#[derive(Derivative, PartialEq, Eq)]
+#[derive(Derivative, PartialEq, Eq, Debug)]
 #[derivative(Clone(bound = "P: Config"))]// #[derive(Clone)]
 pub enum MMRDigest<P: Config> {
     Leaf(P::LeafDigest),
@@ -441,12 +441,12 @@ pub fn gen_inner_digest<
 /// For this release, padding will not be supported because of security concerns: if the leaf hash and two to one hash uses same underlying
 /// CRH, a malicious prover can prove a leaf while the actual node is an inner node. In the future, we can prefix leaf hashes in different layers to
 /// solve the problem.
-#[derive(Derivative)]
-#[derivative(Clone(bound = "P: Config"))]
+// #[derive(Derivative)]
+// #[derivative(Clone(bound = "P: Config"))]
 
 pub struct MerkleMountainRange<P: Config> {
     /// Store leaf and inner digests
-    batch: MMRBatch<MMRDigest<P>>,
+    batch: Box<MMRBatch<MMRDigest<P>>>,
     /// Store the inner hash parameters
     two_to_one_hash_param: TwoToOneParam<P>,
     /// Store the leaf hash parameters
@@ -455,7 +455,7 @@ pub struct MerkleMountainRange<P: Config> {
     mmr_size: u64,
 }
 
-impl<P: Config> MerkleMountainRange<P> {
+impl<P: 'static +  Config> MerkleMountainRange<P> {
 
     /// Returns a new merkle mountain range. 
     pub fn new(
@@ -463,7 +463,7 @@ impl<P: Config> MerkleMountainRange<P> {
         two_to_one_hash_param: &TwoToOneParam<P>,
     ) -> Self {
         MerkleMountainRange {
-            batch: MMRBatch::new(),
+            batch: Box::new(MMRBatch::new()),
             two_to_one_hash_param: two_to_one_hash_param.clone(),
             leaf_hash_param: leaf_hash_param.clone(),
             mmr_size: 0,
@@ -480,27 +480,21 @@ impl<P: Config> MerkleMountainRange<P> {
         Ok(Cow::Owned(elem))
     }
 
-    pub fn push_vec<L: Borrow<P::Leaf>>(&mut self, leaves: impl IntoIterator<Item = L>) -> MMRResult<Self> {
+    pub fn push_vec<L: Borrow<P::Leaf>>(&mut self, leaves: impl IntoIterator<Item = L>) -> MMRResult<Vec<u64>> {
         
-        let mut push_result;
+        let mut push_result_vec= Vec::new();
 
         for leaf in leaves.into_iter() {
             let leaf_hash = P::LeafHash::evaluate(&self.leaf_hash_param, leaf).unwrap();
-            // let converted_leaf_hash = P::LeafInnerDigestConverter::convert(leaf_hash).unwrap().borrow().clone();
-            push_result = self.push(leaf_hash);
+            let push_result = self.push(leaf_hash);
 
             match push_result {
-                Ok(_) => continue,
+                Ok(_) => push_result_vec.push(push_result.unwrap()),
                 Err(_) => return Err(MMRError::StoreError("invalid leaf push".to_string())),
             }
         }
 
-        Ok(MerkleMountainRange{
-            batch: self.batch.clone(),
-            two_to_one_hash_param: self.two_to_one_hash_param.clone(),
-            leaf_hash_param: self.leaf_hash_param.clone(),
-            mmr_size: self.mmr_size
-        })
+        Ok(push_result_vec)
     }
 
     // push a element and return position
@@ -532,6 +526,10 @@ impl<P: Config> MerkleMountainRange<P> {
         // update mmr_size
         self.mmr_size = pos + 1;
         Ok(elem_pos)
+    }
+
+    pub fn commit(self) -> MMRResult<()> {
+        self.batch.commit()
     }
 
     /// Returns the root of the Merkle Mount Range.
@@ -603,12 +601,8 @@ impl<P: Config> MerkleMountainRange<P> {
             } else {
                 bagging_track = 0;
             }
-            let proof_result = self.gen_proof_for_peak(&mut path, pos_list, peak_pos);
+            self.gen_proof_for_peak(&mut path, pos_list, peak_pos)?;
 
-            match proof_result {
-                Ok(_) => continue,
-                Err(_) => return Err(MMRError::CorruptedProof)
-            }
         }
 
         if bagging_track > 1 {
@@ -639,13 +633,11 @@ impl<P: Config> MerkleMountainRange<P> {
         if pos_list.len() == 1 && pos_list == [peak_pos] {
             return Ok(());
         }
+
         // take peak root from store if no positions need to be proof
         if pos_list.is_empty() {
             proof.push(
-                self.batch
-                    .get_elem(peak_pos)
-                    .unwrap()
-                    .unwrap()            
+                self.batch.get_elem(peak_pos)?.ok_or(MMRError::InconsistentStore)?        
             );
             return Ok(());
         }
