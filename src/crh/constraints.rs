@@ -49,3 +49,42 @@ pub trait TwoToOneCRHSchemeGadget<H: TwoToOneCRHScheme, ConstraintF: Field>: Siz
         right_input: &Self::OutputVar,
     ) -> Result<Self::OutputVar, SynthesisError>;
 }
+
+pub trait MMRTwoToOneCRHSchemeGadget<H: TwoToOneCRHScheme, ConstraintF: Field>: Sized {
+    type InputVar: ?Sized;
+    type OutputVar: EqGadget<ConstraintF>
+        + ToBytesGadget<ConstraintF>
+        + CondSelectGadget<ConstraintF>
+        + AllocVar<H::Output, ConstraintF>
+        + R1CSVar<ConstraintF>
+        + Debug
+        + Clone
+        + Sized;
+
+    type ParametersVar: AllocVar<H::Parameters, ConstraintF> + Clone;
+
+    fn evaluate(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::InputVar,
+        right_input: &Self::InputVar,
+    ) -> Result<Self::OutputVar, SynthesisError>;
+
+    fn compress(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::OutputVar,
+        right_input: &Self::OutputVar,
+    ) -> Result<Self::OutputVar, SynthesisError>;
+
+    fn left_compress( 
+        parameters: &Self::Parameters,
+        left_input: &Self::Output,
+        right_input: &Self::Input,
+    ) -> Result<Self::Output, Error>;
+
+
+    fn right_compress(
+        parameters: &Self::Parameters,
+        left_input: &Self::Input,
+        right_input: &Self::Output,
+    ) -> Result<Self::Output, Error>;
+}
