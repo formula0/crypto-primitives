@@ -1,6 +1,6 @@
 use crate::crh::MMRTwoToOneCRHSchemeGadget;
 use crate::mmr::{Config, IdentityDigestConverter, VecDeque, 
-    get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset, gen_inner_digest};
+    get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
 use crate::{CRHSchemeGadget, MMRPath};
 use crate::mmr::error::{Result as MMRResult, Error as MMRError};
 
@@ -17,6 +17,8 @@ use ark_relations::r1cs::{Namespace, SynthesisError};
 use ark_std::borrow::Borrow;
 use ark_std::fmt::Debug;
 use ark_std::vec::Vec;
+
+use super::MMRDigest;
 
 pub trait DigestVarConverter<From, To: ?Sized> {
     type TargetType: Borrow<To>;
@@ -93,7 +95,9 @@ type TwoToOneParam<PG, P, ConstraintF> =
         ConstraintF,
     >>::ParametersVar;
 
-pub enum MMRGadgetDigest<PG: ConfigGadget> {
+#[derive(Derivative, PartialEq, Eq, Debug)]
+#[derivative(Clone(bound = "P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>"))]
+pub enum MMRGadgetDigest<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> {
     Leaf(PG::LeafDigest),
     Inner(PG::InnerDigest)
 }
@@ -106,7 +110,7 @@ pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, Constraint
     /// `path[i]` is 0 (false) iff ith non-leaf node from top to bottom is left.
     path: Vec<Boolean<ConstraintF>>,
     /// `auth_path[i]` is the entry of sibling of ith non-leaf node from top to bottom.
-    auth_path: Vec<MMRGadgetDigest<PG>>,
+    auth_path: Vec<MMRGadgetDigest<P, ConstraintF, PG>>,
     
     mmr_size: UInt64<ConstraintF>,
 
@@ -159,6 +163,41 @@ where
     }
 }
 
+impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> AllocVar<MMRDigest<P>, ConstraintF>
+    for MMRGadgetDigest<P, ConstraintF, PG>
+where
+    P: Config,
+    ConstraintF: Field,
+{
+    #[tracing::instrument(target = "r1cs", skip(cs, f))]
+    fn new_variable<T: Borrow<MMRDigest<P>>>(
+        cs: impl Into<Namespace<ConstraintF>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+        f().and_then(|val| {
+            if let MMRDigest::Inner(inner) = val.borrow() {
+                let digest = PG::InnerDigest::new_variable(
+                    ark_relations::ns!(cs, "inner_digest"),
+                    || Ok(inner),
+                    mode,
+                )?;
+                return Ok(MMRGadgetDigest::Inner(digest));
+            } else if let MMRDigest::Leaf(leaf) = val.borrow() {
+                let digest = PG::LeafDigest::new_variable(
+                    ark_relations::ns!(cs, "leaf_digest"),
+                    || Ok(leaf),
+                    mode,
+                )?;
+                return Ok(MMRGadgetDigest::Leaf(digest));
+            }
+            Err(SynthesisError::MissingCS)
+        })
+    }
+}
+
 impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P, ConstraintF, PG> {
 
     /// Check that hashing a Merkle mountain range path according to `self`, and
@@ -172,7 +211,10 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         leaf: &PG::Leaf,
     ) -> Result<Boolean<ConstraintF>, SynthesisError> {
         let expected_root = self.calculate_root(leaf_params, two_to_one_params, leaf).unwrap();
-        Ok(expected_root.is_eq(root)?)
+        if let MMRGadgetDigest::Inner(inner_expected_root) = &expected_root {
+            return Ok(inner_expected_root.is_eq(root)?);
+        }
+            Err(SynthesisError::AssignmentMissing)
     }
 
     /// Calculate the root of the Merkle tree assuming that `leaf` is the leaf on the path defined by `self`.
@@ -182,9 +224,9 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         leaf_params: &LeafParam<PG, P, ConstraintF>,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         leaf: &PG::Leaf,
-    ) -> MMRResult<PG::InnerDigest> {
+    ) -> MMRResult<MMRGadgetDigest<P, ConstraintF, PG>> {
         let claimed_leaf_hash = PG::LeafHash::evaluate(leaf_params, leaf).unwrap();
-        let mut leaves = vec![(self.leaf_index.value().unwrap(), claimed_leaf_hash.clone())];
+        let mut leaves = vec![(self.leaf_index.value().unwrap(), MMRGadgetDigest::Leaf(claimed_leaf_hash.clone()))];
 
         let peak_hashes = self.calculate_peaks_hashes(leaves, two_to_one_params, &claimed_leaf_hash).unwrap();
         Self::bagging_peaks_hashes(two_to_one_params, peak_hashes)
@@ -192,18 +234,18 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
     pub fn calculate_peaks_hashes(
         &self, 
-        mut leaves: Vec<(u64, MMRGadgetDigest<PG>)>,
+        mut leaves: Vec<(u64, MMRGadgetDigest<P, ConstraintF, PG>)>,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
         claimed_leaf_hash: &PG::LeafDigest,
-    ) -> MMRResult<Vec<MMRGadgetDigest<PG>>> {
+    ) -> MMRResult<Vec<MMRGadgetDigest<P, ConstraintF, PG>>> {
         // special handle the only 1 leaf MMR
         if self.mmr_size.value().unwrap() == 1 && self.auth_path.len() == 1 {
-            return Ok(vec![converted_leaf_hash.clone()]);
+            return Ok(vec![MMRGadgetDigest::Leaf(claimed_leaf_hash.clone())]);
         }
 
         let mut path_iter = self.auth_path.iter();
         let peaks = get_peaks(self.mmr_size.value().unwrap());    
-        let mut peaks_hashes: Vec<MMRGadgetDigest<P>> = Vec::with_capacity(peaks.len() + 1);
+        let mut peaks_hashes: Vec<MMRGadgetDigest<P, ConstraintF, PG>> = Vec::with_capacity(peaks.len() + 1);
         for peak_pos in peaks {
             let mut leaves = take_while_vec(&mut leaves, |(pos, _)| *pos <= peak_pos);
             let peak_root = if leaves.len() == 1 && leaves[0].0 == peak_pos {
@@ -244,10 +286,10 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
     pub fn calculate_peak_root(
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        leaves: Vec<(u64, MMRGadgetDigest<P>)>,
+        leaves: Vec<(u64, MMRGadgetDigest<P, ConstraintF, PG>)>,
         peak_pos: u64,
-        path_iter: &mut Iterator<Item = &MMRGadgetDigest<PG>>,
-    ) -> MMRResult<PG::InnerDigest> {
+        path_iter: &mut Iterator<Item = &MMRGadgetDigest<P, ConstraintF, PG>>,
+    ) -> MMRResult<MMRGadgetDigest<P, ConstraintF, PG>> {
         debug_assert!(!leaves.is_empty(), "can't be empty");
         // (position, hash, height)
         let mut queue: VecDeque<_> = leaves
@@ -279,10 +321,10 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
                 path_iter.next().ok_or(MMRError::CorruptedProof)?.clone()
             };
 
-            let parent_item: PG::InnerDigest = if next_height > height {
-                gen_inner_digest::<PG>(two_to_one_params, &sibling_item, &item).unwrap()
+            let parent_item = if next_height > height {
+                Self::gen_inner_gadget_digest(two_to_one_params, sibling_item, item).unwrap()
             } else {
-                gen_inner_digest::<PG>(two_to_one_params, &item, &sibling_item).unwrap()
+                Self::gen_inner_gadget_digest(two_to_one_params, item, sibling_item).unwrap()
             };
 
             if parent_pos < peak_pos {
@@ -296,17 +338,97 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
     pub fn bagging_peaks_hashes(
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        mut peaks_hashes: Vec<PG::InnerDigest>,
-    ) -> MMRResult<PG::InnerDigest> {
+        mut peaks_hashes: Vec<MMRGadgetDigest<P, ConstraintF, PG>>,
+    ) -> MMRResult<MMRGadgetDigest<P, ConstraintF, PG>> {
         // bagging peaks
         // bagging from right to left via hash(right, left).
         while peaks_hashes.len() > 1 {
             let right_peak = peaks_hashes.pop().expect("pop");
             let left_peak = peaks_hashes.pop().expect("pop");
-            let bagged = gen_inner_digest::<PG>(two_to_one_params, &right_peak, &left_peak).unwrap();
+            let bagged = Self::gen_inner_gadget_digest(two_to_one_params, right_peak, left_peak).unwrap();
             peaks_hashes.push(bagged);
         }
         peaks_hashes.pop().ok_or(MMRError::CorruptedProof)
+    }
+
+    pub fn gen_inner_gadget_digest(
+        two_to_one_hash_param: &TwoToOneParam<PG, P, ConstraintF>,
+        left: MMRGadgetDigest<P, ConstraintF, PG>,
+        right: MMRGadgetDigest<P, ConstraintF, PG>
+    ) -> MMRResult<MMRGadgetDigest<P, ConstraintF, PG>> {
+        let is_left_leaf ;
+        let is_right_leaf;
+
+        match left {
+            MMRGadgetDigest::Inner(_) => is_left_leaf = false,
+            MMRGadgetDigest::Leaf(_) => is_left_leaf = true,
+        }
+        match right {
+            MMRGadgetDigest::Inner(_) => is_right_leaf = false,
+            MMRGadgetDigest::Leaf(_) => is_right_leaf = true,
+        }
+
+
+        if is_left_leaf && is_right_leaf {
+            let converted_left;
+            let converted_right;
+            if let MMRGadgetDigest::Leaf(leaf_left) = &left {
+                converted_left = PG::LeafInnerConverter::convert(leaf_left.clone()).unwrap();
+                if let MMRGadgetDigest::Leaf(leaf_right) = &right {
+                    converted_right = PG::LeafInnerConverter::convert(leaf_right.clone()).unwrap();
+                    let inner = PG::TwoToOneHash::evaluate(
+                        &two_to_one_hash_param.clone(),
+                        converted_left.borrow(),
+                        converted_right.borrow()
+                    ).unwrap();
+                    return Ok(MMRGadgetDigest::Inner(inner))
+                }
+            }
+            return Err(MMRError::StoreError("invalid merge".to_string()))
+        } else if !is_left_leaf && is_right_leaf{
+            let converted_right;
+            if let MMRGadgetDigest::Inner(inner_left) = &left { 
+                if let MMRGadgetDigest::Leaf(leaf_right) = &right {
+                    converted_right = PG::LeafInnerConverter::convert(leaf_right.clone()).unwrap();
+                    let inner = PG::TwoToOneHash::left_compress(
+                        &two_to_one_hash_param.clone(),
+                        &inner_left,
+                        converted_right.borrow()
+                    ).unwrap();
+            
+                    return Ok(MMRGadgetDigest::Inner(inner))
+                }
+            }
+            return Err(MMRError::StoreError("invalid merge".to_string()))
+        } else if is_left_leaf && !is_right_leaf{
+            let converted_left;
+            if let MMRGadgetDigest::Inner(inner_right) = &right {
+                if let MMRGadgetDigest::Leaf(leaf_left) = &left { 
+                converted_left = PG::LeafInnerConverter::convert(leaf_left.clone()).unwrap();
+                    let inner = PG::TwoToOneHash::right_compress(
+                        &two_to_one_hash_param.clone(),
+                        converted_left.borrow(),
+                        inner_right
+                    ).unwrap();
+
+                    return Ok(MMRGadgetDigest::Inner(inner))
+                }
+            }
+            return Err(MMRError::StoreError("invalid merge".to_string()))
+        } else {
+            if let MMRGadgetDigest::Inner(inner_left) = &left {
+                if let MMRGadgetDigest::Inner(inner_right) = &right {
+                    let inner = PG::TwoToOneHash::compress(
+                        &two_to_one_hash_param.clone(),
+                        inner_left,
+                        inner_right
+                    ).unwrap();
+            
+                    return Ok(MMRGadgetDigest::Inner(inner))
+                }
+            }
+            return Err(MMRError::StoreError("invalid merge".to_string()))
+        }
     }
 }
 
