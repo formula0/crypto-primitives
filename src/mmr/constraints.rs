@@ -1,5 +1,6 @@
 use crate::crh::TwoToOneCRHSchemeGadget;
-use crate::mmr::{MMRDigest, Config, IdentityDigestConverter, VecDeque, get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset};
+use crate::mmr::{MMRDigest, Config, IdentityDigestConverter, VecDeque, 
+    get_peaks, take_while_vec, pos_height_in_tree, parent_offset, sibling_offset, gen_inner_digest};
 use crate::{CRHSchemeGadget, MMRPath};
 use crate::mmr::error::{Result as MMRResult, Error as MMRError};
 
@@ -57,8 +58,7 @@ pub trait ConfigGadget<P: Config, ConstraintF: Field> {
         + Sized;
     type LeafInnerConverter: DigestVarConverter<
         Self::LeafDigest,
-        Self::InnerDigest
-        // <Self::TwoToOneHash as TwoToOneCRHSchemeGadget<P::TwoToOneHash, ConstraintF>>::InputVar,
+        <Self::TwoToOneHash as TwoToOneCRHSchemeGadget<P::TwoToOneHash, ConstraintF>>::InputVar,
     >;
     type InnerDigest: AllocVar<P::InnerDigest, ConstraintF>
         + EqGadget<ConstraintF>
@@ -94,7 +94,7 @@ type TwoToOneParam<PG, P, ConstraintF> =
     >>::ParametersVar;
 
 
-/// Represents a merkle tree path gadget.
+/// Represents a merkle mountain tree path gadget.
 #[derive(Debug, Derivative)]
 #[derivative(Clone(bound = "P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>"))]
 pub struct PathVar<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> {
@@ -187,10 +187,10 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
     pub fn calculate_peaks_hashes(
         &self, 
-        mut leaves: Vec<(u64, PG::LeafDigest)>,
+        mut leaves: Vec<(u64, MMRDigest<PG>)>,
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        converted_leaf_hash: &PG::InnerDigest,
-    ) -> MMRResult<Vec<PG::InnerDigest>> {
+        claimed_leaf_hash: &PG::LeafDigest,
+    ) -> MMRResult<Vec<MMRDigest<PG>>> {
         // special handle the only 1 leaf MMR
         if self.mmr_size.value().unwrap() == 1 && self.auth_path.len() == 1 {
             return Ok(vec![converted_leaf_hash.clone()]);
@@ -198,7 +198,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
         let mut path_iter = self.auth_path.iter();
         let peaks = get_peaks(self.mmr_size.value().unwrap());    
-        let mut peaks_hashes: Vec<PG::InnerDigest> = Vec::with_capacity(peaks.len() + 1);
+        let mut peaks_hashes: Vec<MMRDigest<P>> = Vec::with_capacity(peaks.len() + 1);
         for peak_pos in peaks {
             let mut leaves = take_while_vec(&mut leaves, |(pos, _)| *pos <= peak_pos);
             let peak_root = if leaves.len() == 1 && leaves[0].0 == peak_pos {
@@ -239,7 +239,7 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
 
     pub fn calculate_peak_root(
         two_to_one_params: &TwoToOneParam<PG, P, ConstraintF>,
-        leaves: Vec<(u64, PG::LeafDigest)>,
+        leaves: Vec<(u64, MMRDigest<P>)>,
         peak_pos: u64,
         path_iter: &mut Iterator<Item = &MMRDigest<PG>>,
     ) -> MMRResult<PG::InnerDigest> {
@@ -275,9 +275,9 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
             };
 
             let parent_item: PG::InnerDigest = if next_height > height {
-                PG::TwoToOneHash::compress(two_to_one_params, &sibling_item, &item).unwrap()
+                gen_inner_digest::<PG>(two_to_one_params, &sibling_item, &item).unwrap()
             } else {
-                PG::TwoToOneHash::compress(two_to_one_params, &item, &sibling_item).unwrap()
+                gen_inner_digest::<PG>(two_to_one_params, &item, &sibling_item).unwrap()
             };
 
             if parent_pos < peak_pos {
@@ -298,7 +298,8 @@ impl<P: Config, ConstraintF: Field, PG: ConfigGadget<P, ConstraintF>> PathVar<P,
         while peaks_hashes.len() > 1 {
             let right_peak = peaks_hashes.pop().expect("pop");
             let left_peak = peaks_hashes.pop().expect("pop");
-            peaks_hashes.push(PG::TwoToOneHash::compress(two_to_one_params, &right_peak, &left_peak).unwrap());
+            let bagged = gen_inner_digest::<PG>(two_to_one_params, &right_peak, &left_peak).unwrap();
+            peaks_hashes.push(bagged);
         }
         peaks_hashes.pop().ok_or(MMRError::CorruptedProof)
     }
