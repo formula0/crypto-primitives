@@ -66,12 +66,12 @@ mod byte_mt_tests {
             &two_to_one_crh_params,
         );
 
-        mmr.push_vec(leaves.iter().map(|v| v.as_slice()));
+        let positions = mmr.push_vec(leaves.iter().map(|v| v.as_slice()));
 
         let root = mmr.get_root().unwrap;
         for (i, leaf) in leaves.iter().enumerate() {
             let cs = ConstraintSystem::<Fq>::new_ref();
-            let proof = mmr.generate_proof(i).unwrap();
+            let proof = mmr.gen_proof(positions[i]).unwrap();
             assert!(proof
                 .verify(
                     &leaf_crh_params,
@@ -236,12 +236,12 @@ mod field_mt_tests {
             &two_to_one_params,
         );
 
-        mmr.push_vec(leaves.iter().map(|x| x.as_slice()));
+        let positions = mmr.push_vec(leaves.iter().map(|x| x.as_slice()));
 
         let root = mmr.get_root().unwrap();
         for (i, leaf) in leaves.iter().enumerate() {
             let cs = ConstraintSystem::<F>::new_ref();
-            let proof = tree.generate_proof(i).unwrap();
+            let proof = mmr.gen_proof(positions[i]).unwrap();
             assert!(proof
                 .verify(&leaf_crh_params, &two_to_one_params, &root, leaf.as_slice())
                 .unwrap());
