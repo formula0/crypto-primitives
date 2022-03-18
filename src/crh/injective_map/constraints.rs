@@ -229,7 +229,7 @@ where
         left_input: &Self::InputVar,
         right_input: &Self::OutputVar,
     ) -> Result<Self::OutputVar, SynthesisError> {
-        let left_input_bytes = left_input.to_non_unique_bytes()?;
+        let right_input_bytes = left_input.to_non_unique_bytes()?;
         <Self as TwoToOneCRHSchemeGadget<_, _>>::evaluate(
             parameters,
             left_input,
