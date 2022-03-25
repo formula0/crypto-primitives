@@ -164,3 +164,76 @@ where
         )
     }
 }
+
+impl<C, I, GG, IG, W>
+    constraints::MMRTwoToOneCRHSchemeGadget<PedersenTwoToOneCRHCompressor<C, I, W>, ConstraintF<C>>
+    for PedersenTwoToOneCRHCompressorGadget<C, I, W, GG, IG>
+where
+    C: ProjectiveCurve,
+    I: InjectiveMap<C>,
+    GG: CurveVar<C, ConstraintF<C>>,
+    for<'a> &'a GG: GroupOpsBounds<'a, C, GG>,
+    IG: InjectiveMapGadget<C, I, GG>,
+    W: Window,
+{
+    type InputVar = [UInt8<ConstraintF<C>>];
+
+    type OutputVar = IG::OutputVar;
+    type ParametersVar = ped_constraints::CRHParametersVar<C, GG>;
+
+    #[tracing::instrument(target = "r1cs", skip(parameters))]
+    fn evaluate(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::InputVar,
+        right_input: &Self::InputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        // assume equality of left and right length
+        assert_eq!(left_input.len(), right_input.len());
+        let result = ped_constraints::TwoToOneCRHGadget::<C, GG, W>::evaluate(
+            parameters,
+            left_input,
+            right_input,
+        )?;
+        IG::evaluate(&result)
+    }
+
+    fn compress(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::OutputVar,
+        right_input: &Self::OutputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        let left_input_bytes = left_input.to_non_unique_bytes()?;
+        let right_input_bytes = right_input.to_non_unique_bytes()?;
+        <Self as TwoToOneCRHSchemeGadget<_, _>>::evaluate(
+            parameters,
+            &left_input_bytes,
+            &right_input_bytes,
+        )
+    }
+
+    fn left_compress(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::OutputVar,
+        right_input: &Self::InputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        let left_input_bytes = left_input.to_non_unique_bytes()?;
+        <Self as TwoToOneCRHSchemeGadget<_, _>>::evaluate(
+            parameters,
+            &left_input_bytes,
+            right_input,
+        )
+    }
+
+    fn right_compress(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::InputVar,
+        right_input: &Self::OutputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        let right_input_bytes = left_input.to_non_unique_bytes()?;
+        <Self as TwoToOneCRHSchemeGadget<_, _>>::evaluate(
+            parameters,
+            left_input,
+            &right_input_bytes,
+        )
+    }
+}

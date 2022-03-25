@@ -25,11 +25,13 @@ pub mod encryption;
 pub mod prf;
 pub mod signature;
 pub mod snark;
+pub mod mmr;
 
 pub use self::{
     commitment::CommitmentScheme,
     crh::CRHScheme,
     merkle_tree::{MerkleTree, Path},
+    mmr::{MerkleMountainRange, Path as MMRPath},
     prf::PRF,
     signature::SignatureScheme,
     snark::{CircuitSpecificSetupSNARK, UniversalSetupSNARK, SNARK},
