@@ -238,6 +238,8 @@ where
 #[cfg(test)]
 mod test {
     use crate::encryption::constraints::AsymmetricEncryptionGadget;
+    use ark_ec::CurveGroup;
+    use ark_ec::AffineRepr;
     use ark_std::{test_rng, UniformRand};
 
     use ark_ed_on_bls12_381::{constraints::EdwardsVar, EdwardsProjective as JubJub, Fq};
@@ -258,6 +260,9 @@ mod test {
         let parameters = MyEnc::setup(rng).unwrap();
         let (pk, _) = MyEnc::keygen(&parameters, rng).unwrap();
         let msg = JubJub::rand(rng).into();
+        // let msg = <JubJub as CurveGroup>::Affine::from_random_bytes(&hex::decode("01234567890123456789012345678901").unwrap()).unwrap().into();
+
+        println!("{:?}",msg);
         let randomness = Randomness::rand(rng);
         let primitive_result = MyEnc::encrypt(&parameters, &pk, &msg, &randomness).unwrap();
 
@@ -301,8 +306,15 @@ mod test {
             .unwrap();
         expected_var.enforce_equal(&result_var).unwrap();
 
-        assert_eq!(primitive_result.0, result_var.c1.value().unwrap());
-        assert_eq!(primitive_result.1, result_var.c2.value().unwrap());
+        println!("gate num: {:?}", cs.num_constraints());
+
+        println!("primitive_result.0: {:?}", primitive_result.0.into_group());
+        println!("result_var.c1.value().unwrap(): {:?}",result_var.c1.value().unwrap());
+        println!("primitive_result.1: {:?}", primitive_result.1.into_group());
+        println!("result_var.c2.value().unwrap(): {:?}",result_var.c2.value().unwrap());
+
+        assert_eq!(primitive_result.0.into_group(), result_var.c1.value().unwrap());
+        assert_eq!(primitive_result.1.into_group(), result_var.c2.value().unwrap());
         assert!(cs.is_satisfied().unwrap());
     }
 }

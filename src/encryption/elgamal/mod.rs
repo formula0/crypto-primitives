@@ -104,10 +104,13 @@ where
 
 #[cfg(test)]
 mod test {
+    use ark_ec::CurveGroup;
+    use ark_ec::AffineRepr;
     use ark_std::{test_rng, UniformRand};
 
-    use ark_ed_on_bls12_381::EdwardsProjective as JubJub;
+    use ark_ed_on_bls12_381::{EdwardsProjective as JubJub};
 
+    use crate::encryption::elgamal::Ciphertext;
     use crate::encryption::elgamal::{ElGamal, Randomness};
     use crate::encryption::AsymmetricEncryptionScheme;
 
@@ -120,12 +123,22 @@ mod test {
         let (pk, sk) = ElGamal::<JubJub>::keygen(&parameters, rng).unwrap();
 
         // get a random msg and encryption randomness
-        let msg = JubJub::rand(rng).into();
+        // let msg = JubJub::rand(rng).into();
+        // let msg_1: JubJub = JubJub::rand(rng).into();
+        // println!("msg1: {:#?}", msg_1);
+        let msg: <JubJub as CurveGroup>::Affine = <JubJub as CurveGroup>::Affine::from_random_bytes(&hex::decode("01234567890123456789012345678901").unwrap()).unwrap().into();
+        let bool = msg.is_on_curve();
+        println!("{}",bool);
         let r = Randomness::rand(rng);
 
         // encrypt and decrypt the message
-        let cipher = ElGamal::<JubJub>::encrypt(&parameters, &pk, &msg, &r).unwrap();
+        let cipher: Ciphertext<JubJub> = ElGamal::<JubJub>::encrypt(&parameters, &pk, &msg, &r).unwrap();
         let check_msg = ElGamal::<JubJub>::decrypt(&parameters, &sk, &cipher).unwrap();
+
+        println!("cipher 0: {:#?}", cipher.0.into_group());
+        println!("cipher 1: {:#?}", cipher.1.into_group());
+
+        println!("check_msg: {:#?}",check_msg);
 
         assert_eq!(msg, check_msg);
     }
