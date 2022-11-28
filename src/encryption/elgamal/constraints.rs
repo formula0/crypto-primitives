@@ -238,7 +238,7 @@ where
 #[cfg(test)]
 mod test {
     use crate::encryption::constraints::AsymmetricEncryptionGadget;
-    use ark_ec::CurveGroup;
+    // use ark_ec::CurveGroup;
     use ark_ec::AffineRepr;
     use ark_std::{test_rng, UniformRand};
 
