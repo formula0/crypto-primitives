@@ -14,6 +14,8 @@ use ark_serialize::CanonicalSerialize;
 use ark_std::borrow::Borrow;
 use ark_std::cfg_chunks;
 
+use super::MMRTwoToOneCRHScheme;
+
 #[cfg(feature = "r1cs")]
 pub mod constraints;
 
@@ -186,7 +188,7 @@ impl<C: CurveGroup, W: Window> TwoToOneCRHScheme for TwoToOneCRH<C, W> {
         left_input: T,
         right_input: T,
     ) -> Result<Self::Output, Error> {
-        Self::evaluate(
+        <Self as TwoToOneCRHScheme>::evaluate(
             parameters,
             crate::to_uncompressed_bytes!(left_input)?,
             crate::to_uncompressed_bytes!(right_input)?,
@@ -205,7 +207,84 @@ pub fn bytes_to_bits(bytes: &[u8]) -> Vec<bool> {
     bits
 }
 
-impl<C: CurveGroup> Debug for Parameters<C> {
+
+impl<C: ProjectiveCurve, W: Window> MMRTwoToOneCRHScheme for TwoToOneCRH<C, W> {
+    type Input = [u8];
+    type Output = C::Affine;
+    type Parameters = Parameters<C>;
+
+    fn setup<R: Rng>(r: &mut R) -> Result<Self::Parameters, Error> {
+        CRH::<C, W>::setup(r)
+    }
+
+    fn evaluate<T: Borrow<Self::Input>>(
+        parameters: &Self::Parameters,
+        left_input: T,
+        right_input: T,
+    ) -> Result<Self::Output, Error> {
+        let left_input = left_input.borrow();
+        let right_input = right_input.borrow();
+        assert_eq!(
+            left_input.len(),
+            right_input.len(),
+            "left and right input should be of equal length"
+        );
+        // check overflow
+
+        debug_assert!(left_input.len() * 8 <= Self::HALF_INPUT_SIZE_BITS);
+
+        let mut buffer = vec![0u8; (Self::HALF_INPUT_SIZE_BITS + Self::HALF_INPUT_SIZE_BITS) / 8];
+
+        buffer
+            .iter_mut()
+            .zip(left_input.iter().chain(right_input.iter()))
+            .for_each(|(b, l_b)| *b = *l_b);
+
+        CRH::<C, W>::evaluate(parameters, buffer.as_slice())
+    }
+
+    /// A simple implementation method: just concat the left input and right input together
+    ///
+    /// `evaluate` requires that `left_input` and `right_input` are of equal length.
+    fn compress<T: Borrow<Self::Output>>(
+        parameters: &Self::Parameters,
+        left_input: T,
+        right_input: T,
+    ) -> Result<Self::Output, Error> {
+        <Self as MMRTwoToOneCRHScheme>::evaluate(
+            parameters,
+            crate::to_unchecked_bytes!(left_input)?,
+            crate::to_unchecked_bytes!(right_input)?,
+        )
+    }
+
+    fn left_compress( 
+        parameters: &Self::Parameters,
+        left_input: &Self::Output,
+        right_input:&Self::Input,
+    ) -> Result<Self::Output, Error> {
+        <Self as MMRTwoToOneCRHScheme>::evaluate(
+            parameters,
+            crate::to_unchecked_bytes!(left_input)?,
+            right_input.to_vec(),
+        )
+    }
+
+    fn right_compress(
+        parameters: &Self::Parameters,
+        left_input: &Self::Input,
+        right_input: &Self::Output
+    ) -> Result<Self::Output, Error> {
+        <Self as MMRTwoToOneCRHScheme>::evaluate(
+            parameters,
+            left_input,
+            &crate::to_unchecked_bytes!(right_input)?,
+        )
+    }
+}
+
+
+impl<C: ProjectiveCurve> Debug for Parameters<C> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         writeln!(f, "Pedersen Hash Parameters {{")?;
         for (i, g) in self.generators.iter().enumerate() {

@@ -2,7 +2,7 @@ use crate::{CryptoError, Error};
 use ark_std::rand::Rng;
 use ark_std::{fmt::Debug, hash::Hash, marker::PhantomData};
 
-use super::{pedersen, CRHScheme, TwoToOneCRHScheme};
+use super::{pedersen, CRHScheme, TwoToOneCRHScheme, MMRTwoToOneCRHScheme};
 use ark_ec::{
     twisted_edwards::{Affine as TEAffine, Projective as TEProjective, TECurveConfig},
     CurveConfig, CurveGroup,
@@ -75,7 +75,7 @@ impl<C: CurveGroup, I: InjectiveMap<C>, W: pedersen::Window> TwoToOneCRHScheme
     type Parameters = pedersen::Parameters<C>;
 
     fn setup<R: Rng>(r: &mut R) -> Result<Self::Parameters, Error> {
-        pedersen::TwoToOneCRH::<C, W>::setup(r)
+        <pedersen::TwoToOneCRH<C, W> as TwoToOneCRHScheme>::setup(r)
     }
 
     fn evaluate<T: Borrow<Self::Input>>(
@@ -84,7 +84,7 @@ impl<C: CurveGroup, I: InjectiveMap<C>, W: pedersen::Window> TwoToOneCRHScheme
         right_input: T,
     ) -> Result<Self::Output, Error> {
         let eval_time = start_timer!(|| "PedersenCRHCompressor::Eval");
-        let result = I::injective_map(&pedersen::TwoToOneCRH::<C, W>::evaluate(
+        let result = I::injective_map(&<pedersen::TwoToOneCRH<C, W> as TwoToOneCRHScheme>::evaluate(
             parameters,
             left_input,
             right_input,
@@ -99,10 +99,76 @@ impl<C: CurveGroup, I: InjectiveMap<C>, W: pedersen::Window> TwoToOneCRHScheme
         right_input: T,
     ) -> Result<Self::Output, Error> {
         // convert output to input
-        Self::evaluate(
+        <Self as TwoToOneCRHScheme>::evaluate(
             parameters,
             crate::to_uncompressed_bytes!(left_input)?,
             crate::to_uncompressed_bytes!(right_input)?,
+        )
+    }
+}
+
+impl<C: ProjectiveCurve, I: InjectiveMap<C>, W: pedersen::Window> MMRTwoToOneCRHScheme
+    for PedersenTwoToOneCRHCompressor<C, I, W>
+{
+    type Input = <pedersen::TwoToOneCRH<C, W> as TwoToOneCRHScheme>::Input;
+    type Output = I::Output;
+    type Parameters = pedersen::Parameters<C>;
+
+    fn setup<R: Rng>(r: &mut R) -> Result<Self::Parameters, Error> {
+        <pedersen::TwoToOneCRH<C, W> as MMRTwoToOneCRHScheme>::setup(r)
+    }
+
+    fn evaluate<T: Borrow<Self::Input>>(
+        parameters: &Self::Parameters,
+        left_input: T,
+        right_input: T,
+    ) -> Result<Self::Output, Error> {
+        let eval_time = start_timer!(|| "PedersenCRHCompressor::Eval");
+        let result = I::injective_map(&<pedersen::TwoToOneCRH<C, W> as MMRTwoToOneCRHScheme>::evaluate(
+            parameters,
+            left_input,
+            right_input,
+        )?)?;
+        end_timer!(eval_time);
+        Ok(result)
+    }
+
+    fn compress<T: Borrow<Self::Output>>(
+        parameters: &Self::Parameters,
+        left_input: T,
+        right_input: T,
+    ) -> Result<Self::Output, Error> {
+        // convert output to input
+        <Self as MMRTwoToOneCRHScheme>::evaluate(
+            parameters,
+            crate::to_unchecked_bytes!(left_input)?,
+            crate::to_unchecked_bytes!(right_input)?,
+        )
+    }
+
+    fn left_compress(
+        parameters: &Self::Parameters,
+        left_input: &Self::Output,
+        right_input: &Self::Input,
+    ) -> Result<Self::Output, Error> {
+        // convert output to input
+        <Self as MMRTwoToOneCRHScheme>::evaluate(
+            parameters,
+            crate::to_unchecked_bytes!(left_input)?,
+            right_input.to_vec(),
+        )
+    }
+
+    fn right_compress(
+        parameters: &Self::Parameters,
+        left_input: &Self::Input,
+        right_input: &Self::Output,
+    ) -> Result<Self::Output, Error> {
+        // convert output to input
+        <Self as MMRTwoToOneCRHScheme>::evaluate(
+            parameters,
+            left_input,
+            &crate::to_unchecked_bytes!(right_input)?,
         )
     }
 }

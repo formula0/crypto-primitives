@@ -1,11 +1,9 @@
 [package]
-name = "ark-crypto-primitives"
-version = "0.3.0"
-authors = [ "arkworks contributors" ]
-description = "A library of useful cryptographic primitives"
-homepage = "https://arkworks.rs"
-repository = "https://github.com/arkworks-rs/crypto-primitives"
-documentation = "https://docs.rs/ark-crypto-primitives/"
+name = "mmr-crypto-primitives"
+version = "0.2.1"
+authors = [ "formula0", "arkworks contributors" ]
+description = "ark-crypto-primitives fork: mmr gadget implement"
+repository = "https://github.com/formula0/crypto-primitives"
 keywords = [ "r1cs", "pedersen", "blake2s", "snark", "schnorr" ]
 categories = ["cryptography"]
 include = ["Cargo.toml", "src", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]

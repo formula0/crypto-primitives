@@ -11,7 +11,7 @@ use ark_r1cs_std::prelude::*;
 use ark_relations::r1cs::{Namespace, SynthesisError};
 
 use crate::crh::pedersen::{TwoToOneCRH, CRH};
-use crate::crh::{CRHSchemeGadget, TwoToOneCRHSchemeGadget};
+use crate::crh::{CRHSchemeGadget, TwoToOneCRHSchemeGadget, MMRTwoToOneCRHSchemeGadget};
 use core::{borrow::Borrow, marker::PhantomData};
 
 #[derive(Derivative)]
@@ -128,6 +128,79 @@ where
         let left_input = left_input.to_bytes()?;
         let right_input = right_input.to_bytes()?;
         Self::evaluate(parameters, &left_input, &right_input)
+    }
+}
+
+pub struct MMRTwoToOneCRHGadget<C: ProjectiveCurve, GG: CurveVar<C, ConstraintF<C>>, W: Window>
+where
+    for<'a> &'a GG: GroupOpsBounds<'a, C, GG>,
+{
+    #[doc(hidden)]
+    _group: PhantomData<*const C>,
+    #[doc(hidden)]
+    _group_var: PhantomData<*const GG>,
+    #[doc(hidden)]
+    _window: PhantomData<*const W>,
+}
+
+impl<C, GG, W> MMRTwoToOneCRHSchemeGadget<TwoToOneCRH<C, W>, ConstraintF<C>>
+    for MMRTwoToOneCRHGadget<C, GG, W>
+where
+    C: ProjectiveCurve,
+    GG: CurveVar<C, ConstraintF<C>>,
+    W: Window,
+    for<'a> &'a GG: GroupOpsBounds<'a, C, GG>,
+{
+    type InputVar = [UInt8<ConstraintF<C>>];
+    type OutputVar = GG;
+    type ParametersVar = CRHParametersVar<C, GG>;
+
+    #[tracing::instrument(target = "r1cs", skip(parameters))]
+    fn evaluate(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::InputVar,
+        right_input: &Self::InputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        // assume equality of left and right length
+        assert_eq!(left_input.len(), right_input.len());
+        let chained_input: Vec<_> = left_input
+            .to_vec()
+            .into_iter()
+            .chain(right_input.to_vec().into_iter())
+            .collect();
+        CRHGadget::<C, GG, W>::evaluate(parameters, &chained_input)
+    }
+
+    #[tracing::instrument(target = "r1cs", skip(parameters))]
+    fn compress(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::OutputVar,
+        right_input: &Self::OutputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        // convert output to bytes
+        let left_input = left_input.to_bytes()?;
+        let right_input = right_input.to_bytes()?;
+        Self::evaluate(parameters, &left_input, &right_input)
+    }
+
+    fn left_compress( 
+        parameters: &Self::ParametersVar,
+        left_input: &Self::OutputVar,
+        right_input:&Self::InputVar,
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        // convert output to bytes
+        let left_input = left_input.to_bytes()?;
+        Self::evaluate(parameters, &left_input, right_input)
+    }
+
+    fn right_compress(
+        parameters: &Self::ParametersVar,
+        left_input: &Self::InputVar,
+        right_input: &Self::OutputVar
+    ) -> Result<Self::OutputVar, SynthesisError> {
+        // convert output to bytes
+        let right_input = right_input.to_bytes()?;
+        Self::evaluate(parameters, left_input, &right_input)
     }
 }
 
